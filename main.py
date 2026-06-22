@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 import fitz
 import uvicorn
+from dotenv import load_dotenv
 from mcp import types
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -10,7 +12,11 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount
 
-PDF_DIR = Path("./pdfs")
+from src.middleware.api_key import APIKeyMiddleware
+
+load_dotenv()
+
+PDF_DIR = Path(os.environ.get("PDF_DIR", "./pdfs"))
 
 
 def extract_text(pdf_path: Path) -> str:
@@ -98,9 +104,10 @@ app = Starlette(
             allow_origins=["*"],
             allow_methods=["*"],
             allow_headers=["*"],
-        )
+        ),
+        Middleware(APIKeyMiddleware),
     ],
-    routes=[Mount("/", app=handle_mcp)],
+    routes=[Mount("/mcp", app=handle_mcp)],
     lifespan=lambda app: session_manager.run(),
 )
 
