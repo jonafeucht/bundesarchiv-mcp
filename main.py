@@ -143,6 +143,15 @@ class VectorStore:
         text = extract_text(pdf_path)
         chunks = chunk_text(text)
 
+        if not chunks:
+            print(
+                f"Warning: No text extracted from {filename}. Skipping vector generation."
+            )
+            with self._lock:
+                self._indexed_files.add(filename)
+                self._mtimes[filename] = mtime
+            return
+
         embeddings = self._model.encode(
             chunks, normalize_embeddings=True, show_progress_bar=False
         )
