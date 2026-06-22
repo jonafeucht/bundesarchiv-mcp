@@ -8,13 +8,13 @@ Copy `.env.example` to `.env` and adjust values:
 
 ```env
 MCP_API_KEY=your-secret-key
-USE_API_KEY=true
+USE_API_KEY=false
+INDEX_PATH=./faiss_index
+CHUNK_SIZE=500
+CHUNK_OVERLAP=50
+TOP_K=50
+EMBED_MODEL=all-MiniLM-L6-v2
 ```
-
-| Variable | Description | Default |
-|---|---|---|
-| `MCP_API_KEY` | API key for authenticating requests | *(none)* |
-| `USE_API_KEY` | Enable/disable API key auth | `true` |
 
 ## Integration
 
