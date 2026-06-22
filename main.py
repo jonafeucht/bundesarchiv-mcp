@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import threading
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
