@@ -24,6 +24,15 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      - name: Cache FAISS Index
+        id: faiss-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/mcp-server/faiss_index
+          key: ${{ runner.os }}-faiss-${{ hashFiles('ingest.py', '.github/workflows/*') }}
+          restore-keys: |
+            ${{ runner.os }}-faiss-
+
       - name: Install Ingestion Dependencies
         run: |
           pip install faiss-cpu sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
