@@ -27,10 +27,13 @@ services:
     env_file:
       - .env
     volumes:
-      - ./pdfs:/app/pdfs
-      - ./faiss_index:/app/faiss_index
+      - pdf_data:/app/pdfs
+      - faiss_data:/app/faiss_index
     restart: unless-stopped
 
+volumes:
+  pdf_data:
+  faiss_data:
 ```
 
 ## Integration
