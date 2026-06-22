@@ -30,11 +30,3 @@ USE_API_KEY=true
   }
 }
 ```
-
-## Tools
-
-| Tool | Description |
-|---|---|
-| `list_pdfs` | List all available PDF files in the configured directory |
-| `get_pdf_text` | Return the full extracted text of a given PDF |
-| `search_pdf` | Search for a query string inside a PDF and return matching lines (up to 50) |
