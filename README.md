@@ -16,6 +16,23 @@ TOP_K=50
 EMBED_MODEL=all-MiniLM-L6-v2
 ```
 
+## Deploy
+
+```yml
+services:
+  bundesarchiv-mcp:
+    image: ghcr.io/jonafeucht/bundesarchiv-mcp:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./pdfs:/app/pdfs
+      - ./faiss_index:/app/faiss_index
+    restart: unless-stopped
+
+```
+
 ## Integration
 
 ```json
