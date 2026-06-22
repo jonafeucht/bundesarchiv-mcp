@@ -34,7 +34,7 @@ jobs:
           INDEX_PATH: ${{ github.workspace }}/mcp-server/faiss_index
         run: |
           # Executes your script using the environment variables set above
-          python mcp-server/main.py
+          python3 ingest.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
