@@ -284,7 +284,7 @@ def resolve_pdf_path(filename: str) -> Path:
 # ---------------------------------------------------------------------------
 
 _store = VectorStore(EMBED_MODEL, INDEX_PATH)
-server = Server("Akten der Reichskanzlei - Bundesarchiv MCP")
+server = Server("Akten für das Bundesarchiv")
 
 
 @server.list_tools()
