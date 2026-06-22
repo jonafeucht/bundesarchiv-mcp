@@ -18,6 +18,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Ingestion Dependencies
+        run: |
+          pip install faiss-cpu sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
+
+      - name: Generate FAISS Index
+        env:
+          PDF_DIR: ${{ github.workspace }}/mcp-data
+          INDEX_PATH: ${{ github.workspace }}/mcp-server/faiss_index
+        run: |
+          # Executes your script using the environment variables set above
+          python mcp-server/main.py
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -51,8 +69,8 @@ jobs:
       - name: Build and push to both registries
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: Dockerfile
+          context: ./mcp-server
+          file: ./mcp-server/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

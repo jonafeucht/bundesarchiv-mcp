@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+ENV/
+
+.env
+.env.*
+
+.git
+.gitignore
+
+faiss_index/*.tmp
