@@ -23,6 +23,10 @@ TOP_K = int(os.environ.get("TOP_K", 8))
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 
 
+def table_names(db) -> list[str]:
+    return [t.name if hasattr(t, "name") else t for t in db.list_tables()]
+
+
 class VectorStore:
     """Search engine utilizing an embedded LanceDB table."""
 
@@ -33,10 +37,9 @@ class VectorStore:
         self._table = None
 
     def load(self) -> bool:
-        """Connects to the LanceDB instance and verifies the table exists."""
         try:
             self._db = lancedb.connect(self._db_uri)
-            if TABLE_NAME not in self._db.list_tables():
+            if TABLE_NAME not in table_names(self._db):
                 print(f"Error: Table '{TABLE_NAME}' missing at {self._db_uri}")
                 return False
             self._table = self._db.open_table(TABLE_NAME)
@@ -66,7 +69,6 @@ class VectorStore:
             return []
 
         query_vec = self._model.encode(query, normalize_embeddings=True).tolist()
-
         qb = self._table.search(query_vec).limit(top_k)
 
         if filename_filter:

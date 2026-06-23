@@ -13,10 +13,9 @@
 - ["1968" in der gegenwärtigen deutschen Geschichtspolitik](https://www.bpb.de/shop/zeitschriften/apuz/26243/1968-in-der-gegenwaertigen-deutschen-geschichtspolitik)
 - [Aufbruch „68“? Ein kritischer Rückblick auf die Studentenrevolte](https://www.kas.de/de/web/die-politische-meinung/artikel/detail/-/content/aufbruch-68)
 - [Die DDR im Blick der Stasi 1968](https://www.bundesarchiv.de/publikationen/publikation/die-ddr-im-blick-der-stasi-1968/)
-- [„Brecht den roten Uni-Terror!“ – ‚1968‘ im Visier der extremen Rechten]
 - [Polizeibericht zu Einsätzen (Frankfurt 1967–1969)](https://studentenbewegung-frankfurt.de/dokumentationen-berichte/)
 - [Polizeiphilosophie und Protest policing in der Bundesrepublik Deutschland — von 1960 bis zur staatlichen Einheit 1990](https://www.researchgate.net/publication/300394666_Polizeiphilosophie_und_Protest_policing_in_der_Bundesrepublik_Deutschland_-_von_1960_bis_zur_staatlichen_Einheit_1990)
-- [Gleich Wird's Grün. Freiburger Fahrpreiskämpfe 1968]()
+- [Gleich Wird's Grün. Freiburger Fahrpreiskämpfe 1968](https://www.researchgate.net/publication/259601820_Gleich_Wird's_Grun_Freiburger_Fahrpreiskampfe_1968)
 
 ## Cambodia
 - [Documentation Center of Cambodia](https://databases.dccam.org/)

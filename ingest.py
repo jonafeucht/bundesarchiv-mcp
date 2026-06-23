@@ -32,6 +32,10 @@ def extract_text_from_pdf(path: Path) -> str:
         return "".join(page.get_text() for page in doc)
 
 
+def table_names(db) -> list[str]:
+    return [t.name if hasattr(t, "name") else t for t in db.list_tables()]
+
+
 def main():
     print("Scanning files...")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,7 +78,7 @@ def main():
 
     db = lancedb.connect(OUTPUT_DIR)
 
-    if TABLE_NAME in db.list_tables():
+    if TABLE_NAME in table_names(db):
         db.drop_table(TABLE_NAME)
 
     db.create_table(TABLE_NAME, data=pd.DataFrame(chunks))
