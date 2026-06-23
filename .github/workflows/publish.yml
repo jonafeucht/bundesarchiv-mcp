@@ -9,49 +9,78 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Cache LanceDB index
-        id: cache-lancedb
-        uses: actions/cache@v4
         with:
-          path: mcp-server/lancedb_index
-          key: lancedb-index-${{ hashFiles('mcp-data/**', 'ingest.py') }}
-          restore-keys: |
-            lancedb-index-
+          fetch-depth: 0
+
+      - name: Detect Changes
+        id: check-changes
+        run: |
+          # Check if data or script changed compared to the previous tag
+          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^)
+            CHANGES=$(git diff --name-only $PREV_TAG HEAD -- mcp-data/ ingest.py)
+            if [ -z "$CHANGES" ]; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "No changes in data or ingestion script."
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "Changes detected in data or ingestion script."
+            fi
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "No previous tag found. Forcing generation."
+          fi
+
+      - name: Fetch Index from Latest Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p mcp-server/lancedb_index
+          # Try downloading from the latest existing release, ignore error if none exists
+          gh release download --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "No previous release index found."
+          if [ -f mcp-server/lancedb_index.tar.gz ]; then
+            tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
+            rm mcp-server/lancedb_index.tar.gz
+            echo "index_exists=true" >> $GITHUB_ENV
+          else
+            echo "index_exists=false" >> $GITHUB_ENV
+          fi
 
       - name: Set up Python
-        if: steps.cache-lancedb.outputs.cache-hit != 'true'
+        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
-        if: steps.cache-lancedb.outputs.cache-hit != 'true'
+        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
 
-      - name: Generate LanceDB Database
-        if: steps.cache-lancedb.outputs.cache-hit != 'true'
+      - name: Generate/Update LanceDB Database
+        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
 
-      - name: Verify index
-        if: steps.cache-lancedb.outputs.cache-hit != 'true'
+      - name: Create GitHub Release & Upload Index
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 -c "
-          import lancedb
-          db = lancedb.connect('${{ github.workspace }}/mcp-server/lancedb_index')
-          print('Tables:', db.table_names())
-          "
+          # Package the index directory as a single archive asset
+          tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
+
+          # Create the release if it doesn't exist, or update it, then upload the asset
+          gh release create ${{ github.ref_name }} lancedb_index.tar.gz --title "${{ github.ref_name }}" --notes "Automated release with LanceDB index." || \
+          gh release upload ${{ github.ref_name }} lancedb_index.tar.gz --clobber
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
