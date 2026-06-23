@@ -10,6 +10,7 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from sentence_transformers import SentenceTransformer
 from src.middleware.api_key import APIKeyMiddleware
+from src.service.token_budget_service import apply_token_budget
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -19,14 +20,15 @@ load_dotenv()
 
 DB_URI = os.environ.get("DB_URI", "./lancedb_index")
 TABLE_NAME = "document_chunks"
-TOP_K = int(os.environ.get("TOP_K", 5))
+
+TOP_K = int(os.environ.get("TOP_K", "5"))
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
+
 MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "600"))
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "6000"))
 
 
 class VectorStore:
-    """Search engine utilizing an embedded LanceDB table."""
-
     def __init__(self, embed_model: str, db_uri: str) -> None:
         self._model = SentenceTransformer(embed_model)
         self._db_uri = db_uri
@@ -37,9 +39,7 @@ class VectorStore:
         try:
             self._db = lancedb.connect(self._db_uri)
 
-            tables = self._db.table_names()
-
-            if TABLE_NAME not in tables:
+            if TABLE_NAME not in self._db.table_names():
                 print(f"Error: Table '{TABLE_NAME}' missing at {self._db_uri}")
                 return False
 
@@ -86,13 +86,16 @@ class VectorStore:
         for _, row in df.iterrows():
             score = float(row.get("_distance", row.get("_score", 0.0)))
 
-            meta = {
-                "filename": row["filename"],
-                "chunk": int(row["chunk"]),
-                "text": row["text"],
-            }
-
-            results.append((score, meta))
+            results.append(
+                (
+                    score,
+                    {
+                        "filename": row["filename"],
+                        "chunk": int(row["chunk"]),
+                        "text": row["text"],
+                    },
+                )
+            )
 
         return results
 
@@ -111,9 +114,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search",
-            description=(
-                "Semantic search across all contexts. Returns relevant passages."
-            ),
+            description="Semantic search across all contexts. Returns relevant passages.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -147,22 +148,42 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if not query:
                 return err("query required")
 
-            top_k = int(arguments.get("top_k", TOP_K))
+            top_k = min(int(arguments.get("top_k", TOP_K)), TOP_K)
             filename_filter = arguments.get("filename")
 
-            results = _store.search(query, top_k=top_k, filename_filter=filename_filter)
+            results = _store.search(
+                query,
+                top_k=top_k,
+                filename_filter=filename_filter,
+            )
 
             if not results:
                 return [
-                    types.TextContent(type="text", text="No semantic records matched.")
+                    types.TextContent(
+                        type="text",
+                        text="No semantic records matched.",
+                    )
                 ]
 
-            lines = [
-                f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{m['text'][:MAX_CHARS_PER_CHUNK]}"
-                for s, m in results
-            ]
+            lines = []
 
-            return [types.TextContent(type="text", text="\n\n---\n\n".join(lines))]
+            for s, m in results:
+                text = (m.get("text", "") or "")[:MAX_CHARS_PER_CHUNK]
+
+                item = f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{text}"
+
+                lines.append(item)
+
+            safe_lines = apply_token_budget(lines, MAX_CONTEXT_TOKENS)
+
+            final_text = "\n\n---\n\n".join(safe_lines)
+
+            return [
+                types.TextContent(
+                    type="text",
+                    text=final_text,
+                )
+            ]
 
         return err(f"unknown tool: {name}")
 
@@ -207,6 +228,7 @@ app = Starlette(
     routes=[Mount("/", app=handle_mcp)],
     lifespan=lifespan,
 )
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
