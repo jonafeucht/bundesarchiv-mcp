@@ -52,16 +52,27 @@ class VectorStore:
             print(f"Failed to load LanceDB: {e}")
             return False
 
-    def list_pdfs(self) -> list[str]:
+    def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
         if self._table is None:
             return []
 
-        df = self._table.to_pandas()
+        offset = (page - 1) * per_page
 
-        if "filename" in df.columns:
-            return sorted(df["filename"].dropna().unique().tolist())
+        try:
+            df = (
+                self._table.search()
+                .where("filename IS NOT NULL")
+                .select(["filename"])
+                .to_pandas()
+            )
 
-        return []
+            unique_files = sorted(df["filename"].dropna().unique().tolist())
+
+            return unique_files[offset : offset + per_page]
+
+        except Exception as e:
+            print(f"Error listing PDFs: {e}")
+            return []
 
     def search(
         self,
@@ -109,8 +120,22 @@ async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="list_pdfs",
-            description="List all available indexed files.",
-            inputSchema={"type": "object", "properties": {}},
+            description="List available indexed files with pagination.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number (defaults to 1)",
+                        "default": 1,
+                    },
+                    "per_page": {
+                        "type": "integer",
+                        "description": "Number of files per page (defaults to 50, max 100)",
+                        "default": 50,
+                    },
+                },
+            },
         ),
         types.Tool(
             name="search",
@@ -139,8 +164,16 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
     try:
         if name == "list_pdfs":
-            pdfs = _store.list_pdfs()
-            text = "\n".join(pdfs) if pdfs else "(no source metadata available)"
+            page = max(int(arguments.get("page", 1)), 1)
+            per_page = min(max(int(arguments.get("per_page", 50)), 1), 100)
+
+            pdfs = _store.list_pdfs(page=page, per_page=per_page)
+
+            if pdfs:
+                text = f"--- Page {page} ---\n" + "\n".join(pdfs)
+            else:
+                text = f"(No files found on page {page})"
+
             return [types.TextContent(type="text", text=text)]
 
         elif name == "search":
