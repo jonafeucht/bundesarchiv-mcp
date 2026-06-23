@@ -11,7 +11,7 @@ MCP_API_KEY=your-secret-key
 USE_API_KEY=false
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
-TOP_K=50
+TOP_K=8
 EMBED_MODEL=all-MiniLM-L6-v2
 ```
 
@@ -25,14 +25,7 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    volumes:
-      - pdf_data:/app/pdfs
-      - lancedb_data:/app/lancedb_index
     restart: unless-stopped
-
-volumes:
-  pdf_data:
-  lancedb_data:
 ```
 
 ## Integration

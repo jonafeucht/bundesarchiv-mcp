@@ -5,11 +5,4 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    volumes:
-      - pdf_data:/app/pdfs
-      - lancedb_data:/app/lancedb_index
     restart: unless-stopped
-
-volumes:
-  pdf_data:
-  lancedb_data:

@@ -21,16 +21,10 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Cache LanceDB Index
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/mcp-server/lancedb_index
-          key: ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py', 'mcp-data/**') }}
-
       - name: Install Ingestion Dependencies
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install lancedb pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
+          pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
 
       - name: Generate LanceDB Database
         env:
@@ -44,6 +38,25 @@ jobs:
           ls -la ${{ github.workspace }}/mcp-server/lancedb_index/
           echo "=== Table files ==="
           find ${{ github.workspace }}/mcp-server/lancedb_index/ -type f
+
+      - name: Assert index is non-empty
+        run: |
+          python3 -c "
+          import lancedb, sys
+          db = lancedb.connect('${{ github.workspace }}/mcp-server/lancedb_index')
+          tables = db.list_tables()
+          print('Tables:', tables)
+          if 'document_chunks' not in tables:
+              print('ERROR: table missing')
+              sys.exit(1)
+          t = db.open_table('document_chunks')
+          n = len(t)
+          print(f'Rows: {n}')
+          if n == 0:
+              print('ERROR: table is empty')
+              sys.exit(1)
+          print('OK')
+          "
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
