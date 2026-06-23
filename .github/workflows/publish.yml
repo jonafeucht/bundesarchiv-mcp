@@ -1,62 +1,57 @@
 name: Build & Publish
-
 on:
   push:
     tags:
       - "v*"
-
 env:
   IMAGE_NAME: ${{ github.repository }}
-
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download LanceDB index
-        uses: actions/download-artifact@v4
-        continue-on-error: true
+      - name: Cache LanceDB index
+        id: cache-lancedb
+        uses: actions/cache@v4
         with:
-          name: lancedb-index
           path: mcp-server/lancedb_index
+          key: lancedb-index-${{ hashFiles('mcp-data/**', 'ingest.py') }}
+          restore-keys: |
+            lancedb-index-
 
       - name: Set up Python
+        if: steps.cache-lancedb.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
+        if: steps.cache-lancedb.outputs.cache-hit != 'true'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
 
       - name: Generate LanceDB Database
+        if: steps.cache-lancedb.outputs.cache-hit != 'true'
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
 
       - name: Verify index
+        if: steps.cache-lancedb.outputs.cache-hit != 'true'
         run: |
           python3 -c "
           import lancedb
           db = lancedb.connect('${{ github.workspace }}/mcp-server/lancedb_index')
           print('Tables:', db.table_names())
           "
-
-      - name: Upload LanceDB index
-        uses: actions/upload-artifact@v4
-        with:
-          name: lancedb-index
-          path: mcp-server/lancedb_index
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
