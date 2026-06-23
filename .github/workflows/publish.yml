@@ -17,25 +17,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect Changes
-        id: check-changes
-        run: |
-          # Check if data or script changed compared to the previous tag
-          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
-            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^)
-            CHANGES=$(git diff --name-only $PREV_TAG HEAD -- mcp-data/ ingest.py)
-            if [ -z "$CHANGES" ]; then
-              echo "changed=false" >> $GITHUB_OUTPUT
-              echo "No changes in data or ingestion script."
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-              echo "Changes detected in data or ingestion script."
-            fi
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "No previous tag found. Forcing generation."
-          fi
-
       - name: Fetch Index from Latest Release
         id: process-release
         env:
@@ -43,50 +24,36 @@ jobs:
         run: |
           mkdir -p mcp-server/lancedb_index
 
+          # Get the tag of the latest actual successful release (skipping drafts/pre-releases)
           PREV_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
 
           if [ -n "$PREV_TAG" ]; then
-            echo "Last successful release found: $PREV_TAG"
-
-            CHANGES=$(git diff --name-only "$PREV_TAG" HEAD -- mcp-data/ ingest.py)
-            if [ -z "$CHANGES" ]; then
-              echo "changed=false" >> $GITHUB_OUTPUT
-              echo "No changes in data or ingestion script since $PREV_TAG."
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-              echo "Changes detected since $PREV_TAG."
-            fi
-
-            echo "Attempting to download index from $PREV_TAG..."
-            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "No asset found in $PREV_TAG."
+            echo "Last successful release found: $PREV_TAG. Downloading index..."
+            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "Asset not found in $PREV_TAG."
           else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "No previous successful release found. Forcing generation."
+            echo "No previous successful release found."
           fi
 
           if [ -f mcp-server/lancedb_index.tar.gz ]; then
             tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index.tar.gz
-            echo "index_exists=true" >> $GITHUB_ENV
+            echo "Downloaded and extracted previous index successfully."
           else
-            echo "index_exists=false" >> $GITHUB_ENV
+            echo "Proceeding with a fresh index directory."
           fi
 
       - name: Set up Python
-        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
-        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
 
       - name: Generate/Update LanceDB Database
-        if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
