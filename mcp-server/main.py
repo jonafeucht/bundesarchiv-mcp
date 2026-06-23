@@ -172,7 +172,8 @@ session_manager = StreamableHTTPSessionManager(
 
 @asynccontextmanager
 async def lifespan(_app):
-    await asyncio.get_event_loop().run_in_executor(None, _store.load)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _store.load)
     async with session_manager.run():
         yield
 

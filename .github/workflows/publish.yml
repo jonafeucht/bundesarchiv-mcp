@@ -1,13 +1,10 @@
 name: Build & Publish
-
 on:
   push:
     tags:
       - "v*"
-
 env:
   IMAGE_NAME: ${{ github.repository }}
-
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
@@ -25,14 +22,10 @@ jobs:
           cache: "pip"
 
       - name: Cache LanceDB Index
-        id: lancedb-cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/mcp-server/lancedb_index
-          key: ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py') }}-${{ github.run_number }}
-          restore-keys: |
-            ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py') }}-
-            ${{ runner.os }}-lancedb-
+          key: ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py', 'mcp-data/**') }}
 
       - name: Install Ingestion Dependencies
         run: |
@@ -43,8 +36,14 @@ jobs:
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
+        run: python3 ingest.py
+
+      - name: Verify LanceDB Index
         run: |
-          python3 ingest.py
+          echo "=== Index contents ==="
+          ls -la ${{ github.workspace }}/mcp-server/lancedb_index/
+          echo "=== Table files ==="
+          find ${{ github.workspace }}/mcp-server/lancedb_index/ -type f
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
