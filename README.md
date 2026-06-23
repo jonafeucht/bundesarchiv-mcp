@@ -8,10 +8,12 @@ Copy `.env.example` to `.env` and adjust values:
 
 ```env
 MCP_API_KEY=your-secret-key
-USE_API_KEY=false
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-TOP_K=8
+USE_API_KEY=true
+CHUNK_SIZE=750
+CHUNK_OVERLAP=100
+TOP_K=10
+MAX_CHARS_PER_CHUNK=6000
+MAX_CONTEXT_TOKENS=24000
 EMBED_MODEL=all-MiniLM-L6-v2
 ```
 
