@@ -59,17 +59,6 @@ jobs:
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
 
-      - name: Create GitHub Release & Upload Index
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Package the index directory as a single archive asset
-          tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
-
-          # Create the release if it doesn't exist, or update it, then upload the asset
-          gh release create ${{ github.ref_name }} lancedb_index.tar.gz --title "${{ github.ref_name }}" --notes "Automated release with LanceDB index." || \
-          gh release upload ${{ github.ref_name }} lancedb_index.tar.gz --clobber
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -108,3 +97,14 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create GitHub Release & Upload Index
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Package the index directory as a single archive asset
+          tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
+
+          # Create the release if it doesn't exist, or update it, then upload the asset
+          gh release create ${{ github.ref_name }} lancedb_index.tar.gz --title "${{ github.ref_name }}" --notes "Automated release with LanceDB index." || \
+          gh release upload ${{ github.ref_name }} lancedb_index.tar.gz --clobber
