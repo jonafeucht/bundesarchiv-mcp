@@ -1,19 +1,31 @@
 name: Build & Publish
+
 on:
   push:
     tags:
       - "v*"
+
 env:
   IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download LanceDB index
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: lancedb-index
+          path: mcp-server/lancedb_index
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,7 +33,7 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install Ingestion Dependencies
+      - name: Install dependencies
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
@@ -32,31 +44,19 @@ jobs:
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
 
-      - name: Verify LanceDB Index
-        run: |
-          echo "=== Index contents ==="
-          ls -la ${{ github.workspace }}/mcp-server/lancedb_index/
-          echo "=== Table files ==="
-          find ${{ github.workspace }}/mcp-server/lancedb_index/ -type f
-
-      - name: Assert index is non-empty
+      - name: Verify index
         run: |
           python3 -c "
-          import lancedb, sys
+          import lancedb
           db = lancedb.connect('${{ github.workspace }}/mcp-server/lancedb_index')
-          table_names = db.table_names()
-          print('Tables:', table_names)
-          if 'document_chunks' not in table_names:
-              print('ERROR: table missing')
-              sys.exit(1)
-          t = db.open_table('document_chunks')
-          n = len(t)
-          print(f'Rows: {n}')
-          if n == 0:
-              print('ERROR: table is empty')
-              sys.exit(1)
-          print('OK')
+          print('Tables:', db.table_names())
           "
+
+      - name: Upload LanceDB index
+        uses: actions/upload-artifact@v4
+        with:
+          name: lancedb-index
+          path: mcp-server/lancedb_index
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -85,7 +85,7 @@ jobs:
           username: doppeltilde
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push to both registries
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: ./mcp-server

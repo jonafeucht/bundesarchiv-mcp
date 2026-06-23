@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 
@@ -16,7 +17,13 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 
-def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
+def hash_file(path: Path) -> str:
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()
     stride = size - overlap
     chunks = []
@@ -40,7 +47,22 @@ def main():
 
     model = SentenceTransformer(EMBED_MODEL)
 
-    chunks = []
+    db = lancedb.connect(OUTPUT_DIR)
+
+    if TABLE_NAME in db.table_names():
+        table = db.open_table(TABLE_NAME)
+        existing = table.to_pandas()
+
+        existing_hashes = (
+            set(existing["file_hash"].unique())
+            if "file_hash" in existing.columns
+            else set()
+        )
+    else:
+        table = None
+        existing_hashes = set()
+
+    new_chunks = []
 
     for file_path in DATA_DIR.rglob("*"):
         if not file_path.is_file():
@@ -50,6 +72,12 @@ def main():
             continue
 
         relative_name = str(file_path.relative_to(DATA_DIR))
+        file_hash = hash_file(file_path)
+
+        if file_hash in existing_hashes:
+            print(f"Skipping unchanged: {relative_name}")
+            continue
+
         print(f"Processing: {relative_name}")
 
         if file_path.suffix.lower() == ".pdf":
@@ -58,44 +86,44 @@ def main():
             text = file_path.read_text(encoding="utf-8")
 
         for i, chunk in enumerate(chunk_text(text)):
-            chunks.append(
+            new_chunks.append(
                 {
                     "filename": relative_name,
+                    "file_hash": file_hash,
                     "chunk": i,
                     "text": chunk,
                 }
             )
 
-    if not chunks:
-        print("ERROR: No files found in", DATA_DIR)
-        raise SystemExit(1)
+    if not new_chunks:
+        print("No new or changed files found.")
+        return
 
-    print(f"Embedding {len(chunks)} chunks...")
+    print(f"Embedding {len(new_chunks)} chunks...")
 
-    texts = [c["text"] for c in chunks]
+    texts = [c["text"] for c in new_chunks]
 
     embeddings = model.encode(
         texts,
-        batch_size=64,
         normalize_embeddings=True,
         convert_to_numpy=True,
+        batch_size=64,
         show_progress_bar=True,
     ).astype("float32")
 
     for i, emb in enumerate(embeddings):
-        chunks[i]["vector"] = emb.tolist()
+        new_chunks[i]["vector"] = emb.tolist()
 
-    db = lancedb.connect(OUTPUT_DIR)
+    df = pd.DataFrame(new_chunks)
 
-    existing_tables = db.table_names()
+    if table is None:
+        print("Creating table...")
+        db.create_table(TABLE_NAME, data=df)
+    else:
+        print("Appending to existing table...")
+        table.add(df)
 
-    if TABLE_NAME in existing_tables:
-        print(f"Rebuilding table '{TABLE_NAME}'...")
-        db.drop_table(TABLE_NAME)
-
-    db.create_table(TABLE_NAME, data=pd.DataFrame(chunks))
-
-    print(f"✔ Done. {len(chunks)} chunks written to '{TABLE_NAME}'")
+    print(f"✔ Done. Added {len(new_chunks)} new chunks.")
 
 
 if __name__ == "__main__":
