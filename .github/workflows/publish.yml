@@ -29,8 +29,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/mcp-server/lancedb_index
-          key: ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py', '.github/workflows/*') }}
+          key: ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py') }}-${{ github.run_number }}
           restore-keys: |
+            ${{ runner.os }}-lancedb-${{ hashFiles('ingest.py') }}-
             ${{ runner.os }}-lancedb-
 
       - name: Install Ingestion Dependencies

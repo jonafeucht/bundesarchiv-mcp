@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 
 DATA_DIR = Path("./mcp-data").resolve()
 OUTPUT_DIR = Path("./mcp-server/lancedb_index").resolve()
-CACHE_FILE = OUTPUT_DIR / "mtimes_cache.json"
+CACHE_FILE = OUTPUT_DIR / "hashes_cache.json"
 TABLE_NAME = "document_chunks"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 500
@@ -33,18 +34,27 @@ def extract_text_from_pdf(path):
     return text
 
 
+def calculate_sha256(path):
+    """Calculates SHA-256 hash of a file to reliably detect content changes."""
+    sha256_hash = hashlib.sha256()
+    with open(path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
 def main():
     print("Starting incremental ingestion process into LanceDB...")
     model = SentenceTransformer(EMBED_MODEL)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    existing_mtimes = {}
+    existing_hashes = {}
     if CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                existing_mtimes = json.load(f)
+                existing_hashes = json.load(f)
         except Exception:
-            existing_mtimes = {}
+            existing_hashes = {}
 
     if not DATA_DIR.exists():
         print(f"Error: Data directory {DATA_DIR} does not exist.")
@@ -60,15 +70,19 @@ def main():
             continue
 
         relative_name = str(file_path.relative_to(DATA_DIR))
-        mtime = file_path.stat().st_mtime
-        current_files[relative_name] = mtime
 
-        if relative_name in existing_mtimes and existing_mtimes[relative_name] == mtime:
+        file_hash = calculate_sha256(file_path)
+        current_files[relative_name] = file_hash
+
+        if (
+            relative_name in existing_hashes
+            and existing_hashes[relative_name] == file_hash
+        ):
             continue
 
-        files_to_process.append((file_path, relative_name, mtime))
+        files_to_process.append((file_path, relative_name, file_hash))
 
-    deleted_files = [f for f in existing_mtimes if f not in current_files]
+    deleted_files = [f for f in existing_hashes if f not in current_files]
 
     db = lancedb.connect(OUTPUT_DIR)
     table_exists = TABLE_NAME in db.list_tables()
@@ -85,14 +99,14 @@ def main():
             table.delete_where(f"filename = '{filename}'")
 
     new_chunks = []
-    updated_mtimes = {
-        f: existing_mtimes[f] for f in existing_mtimes if f in current_files
+    updated_hashes = {
+        f: existing_hashes[f] for f in existing_hashes if f in current_files
     }
 
     if files_to_process:
         print(f"Processing {len(files_to_process)} modified/new files...")
-        for file_path, relative_name, mtime in files_to_process:
-            if table_exists and relative_name in existing_mtimes:
+        for file_path, relative_name, file_hash in files_to_process:
+            if table_exists and relative_name in existing_hashes:
                 table.delete_where(f"filename = '{relative_name}'")
 
             if file_path.suffix.lower() == ".pdf":
@@ -106,7 +120,7 @@ def main():
                     {"filename": relative_name, "chunk": i, "text": chunk}
                 )
 
-            updated_mtimes[relative_name] = mtime
+            updated_hashes[relative_name] = file_hash
 
     if new_chunks:
         print(f"Computing embeddings for {len(new_chunks)} new chunks...")
@@ -133,7 +147,7 @@ def main():
         return
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(updated_mtimes, f, indent=2)
+        json.dump(updated_hashes, f, indent=2)
 
     print("LanceDB incremental database update finalized successfully!")
 
