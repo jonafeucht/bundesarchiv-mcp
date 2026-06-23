@@ -19,8 +19,9 @@ load_dotenv()
 
 DB_URI = os.environ.get("DB_URI", "./lancedb_index")
 TABLE_NAME = "document_chunks"
-TOP_K = int(os.environ.get("TOP_K", 8))
+TOP_K = int(os.environ.get("TOP_K", 5))
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
+MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "600"))
 
 
 class VectorStore:
@@ -157,7 +158,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 ]
 
             lines = [
-                f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{m['text']}"
+                f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{m['text'][:MAX_CHARS_PER_CHUNK]}"
                 for s, m in results
             ]
 
