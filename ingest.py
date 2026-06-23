@@ -1,14 +1,15 @@
 import json
-import os
 from pathlib import Path
 
-import faiss
 import fitz
-import numpy as np
+import lancedb
+import pandas as pd
 from sentence_transformers import SentenceTransformer
 
 DATA_DIR = Path("./mcp-data").resolve()
-OUTPUT_DIR = Path("./mcp-server/faiss_index").resolve()
+OUTPUT_DIR = Path("./mcp-server/lancedb_index").resolve()
+CACHE_FILE = OUTPUT_DIR / "mtimes_cache.json"
+TABLE_NAME = "document_chunks"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -33,28 +34,16 @@ def extract_text_from_pdf(path):
 
 
 def main():
-    print("Starting incremental ingestion process...")
+    print("Starting ingestion process into LanceDB...")
     model = SentenceTransformer(EMBED_MODEL)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    meta_file = OUTPUT_DIR / "chunks.json"
-    idx_file = OUTPUT_DIR / "index.faiss"
-
-    existing_chunks = []
     existing_mtimes = {}
-
-    if meta_file.exists() and idx_file.exists():
+    if CACHE_FILE.exists():
         try:
-            print("Found existing index files. Loading cache...")
-            with open(meta_file, "r", encoding="utf-8") as f:
-                old_data = json.load(f)
-            existing_chunks = old_data.get("chunks", [])
-            existing_mtimes = old_data.get("mtimes", {})
-            print(f"Loaded cache containing {len(existing_mtimes)} tracking states.")
-        except Exception as e:
-            print(
-                f"Warning: Failed to parse cache metadata ({e}). Rebuilding full index."
-            )
-            existing_chunks = []
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                existing_mtimes = json.load(f)
+        except Exception:
             existing_mtimes = {}
 
     if not DATA_DIR.exists():
@@ -79,90 +68,63 @@ def main():
 
         files_to_process.append((file_path, relative_name, mtime))
 
-    purged_chunks = [
-        c
-        for c in existing_chunks
-        if c["filename"] in current_files
-        and c["filename"] not in [f[1] for f in files_to_process]
-    ]
+    db = lancedb.connect(OUTPUT_DIR)
+    table_exists = TABLE_NAME in db.table_names()
 
-    new_chunks = []
-    updated_mtimes = {
-        c["filename"]: existing_mtimes[c["filename"]]
-        for c in purged_chunks
-        if c["filename"] in existing_mtimes
-    }
+    if not files_to_process and table_exists:
+        if set(existing_mtimes.keys()) == set(current_files.keys()):
+            print("LanceDB index is up to date. No operations required.")
+            return
 
-    if files_to_process:
-        print(f"Found {len(files_to_process)} new or modified files to process.")
-        for file_path, relative_name, mtime in files_to_process:
-            text = ""
-            if file_path.suffix.lower() == ".pdf":
-                print(f"Processing PDF: {relative_name}")
-                text = extract_text_from_pdf(file_path)
-            elif file_path.suffix.lower() in [".txt", ".md"]:
-                print(f"Processing Text/Markdown: {relative_name}")
-                text = file_path.read_text(encoding="utf-8")
+    print("Processing structural items...")
 
-            chunks = chunk_text(text)
-            if chunks:
-                updated_mtimes[relative_name] = mtime
-                for i, chunk in enumerate(chunks):
-                    new_chunks.append(
-                        {"filename": relative_name, "chunk": i, "text": chunk}
-                    )
-    else:
-        print(
-            "All existing files match the tracking cache. Checking index structure completeness..."
-        )
+    all_chunks = []
+    updated_mtimes = {}
 
-    if (
-        not new_chunks
-        and len(purged_chunks) == len(existing_chunks)
-        and idx_file.exists()
-    ):
-        print("Index is 100% up to date. No operations required.")
+    for file_path in DATA_DIR.rglob("*"):
+        if not file_path.is_file() or file_path.suffix.lower() not in [
+            ".pdf",
+            ".txt",
+            ".md",
+        ]:
+            continue
+
+        relative_name = str(file_path.relative_to(DATA_DIR))
+        mtime = file_path.stat().st_mtime
+        updated_mtimes[relative_name] = mtime
+
+        if file_path.suffix.lower() == ".pdf":
+            text = extract_text_from_pdf(file_path)
+        else:
+            text = file_path.read_text(encoding="utf-8")
+
+        chunks = chunk_text(text)
+        for i, chunk in enumerate(chunks):
+            all_chunks.append({"filename": relative_name, "chunk": i, "text": chunk})
+
+    if not all_chunks:
+        print("No documents found. Cleaning storage database.")
+        if table_exists:
+            db.drop_table(TABLE_NAME)
+        if CACHE_FILE.exists():
+            CACHE_FILE.unlink()
         return
 
-    print("Reassembling text mapping matrices...")
-    final_chunks = purged_chunks + new_chunks
-    indexed_files = list(updated_mtimes.keys())
-
-    if not final_chunks:
-        print("No structural text items remain across files. Clearing outputs.")
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        if meta_file.exists():
-            meta_file.unlink()
-        if idx_file.exists():
-            idx_file.unlink()
-        return
-
-    print(
-        f"Building updated FAISS index context mapping ({len(final_chunks)} total chunks)..."
-    )
-    texts = [c["text"] for c in final_chunks]
+    print(f"Computing embeddings for {len(all_chunks)} chunks...")
+    texts = [c["text"] for c in all_chunks]
     embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
-    embeddings = np.array(embeddings, dtype="float32")
 
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatIP(dimension)
-    index.add(embeddings)
+    for idx, emb in enumerate(embeddings):
+        all_chunks[idx]["vector"] = emb.tolist()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(idx_file))
+    df = pd.DataFrame(all_chunks)
 
-    with open(meta_file, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "chunks": final_chunks,
-                "indexed_files": indexed_files,
-                "mtimes": updated_mtimes,
-            },
-            f,
-            indent=2,
-        )
+    db.create_table(TABLE_NAME, data=df, mode="overwrite")
 
-    print(f"Incremental update finalized! Indexed: {len(indexed_files)} files total.")
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(updated_mtimes, f, indent=2)
+
+    print("LanceDB database update finalized successfully!")
 
 
 if __name__ == "__main__":
