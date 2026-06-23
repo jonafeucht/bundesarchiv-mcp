@@ -23,10 +23,6 @@ TOP_K = int(os.environ.get("TOP_K", 8))
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
 
 
-def table_names(db) -> list[str]:
-    return [t.name if hasattr(t, "name") else t for t in db.list_tables()]
-
-
 class VectorStore:
     """Search engine utilizing an embedded LanceDB table."""
 
@@ -39,14 +35,18 @@ class VectorStore:
     def load(self) -> bool:
         try:
             self._db = lancedb.connect(self._db_uri)
-            if TABLE_NAME not in table_names(self._db):
+
+            tables = self._db.table_names()
+
+            if TABLE_NAME not in tables:
                 print(f"Error: Table '{TABLE_NAME}' missing at {self._db_uri}")
                 return False
+
             self._table = self._db.open_table(TABLE_NAME)
-            print(
-                f"Ready: LanceDB connected. Table containing {len(self._table)} vectors."
-            )
+
+            print(f"Ready: LanceDB connected. Table size={len(self._table)}")
             return True
+
         except Exception as e:
             print(f"Failed to load LanceDB: {e}")
             return False
@@ -54,9 +54,12 @@ class VectorStore:
     def list_pdfs(self) -> list[str]:
         if self._table is None:
             return []
+
         df = self._table.to_pandas()
+
         if "filename" in df.columns:
-            return sorted(df["filename"].unique().tolist())
+            return sorted(df["filename"].dropna().unique().tolist())
+
         return []
 
     def search(
@@ -69,21 +72,25 @@ class VectorStore:
             return []
 
         query_vec = self._model.encode(query, normalize_embeddings=True).tolist()
+
         qb = self._table.search(query_vec).limit(top_k)
 
         if filename_filter:
             qb = qb.where(f"filename = '{filename_filter}'")
 
-        results_df = qb.to_pandas()
+        df = qb.to_pandas()
 
         results: list[tuple[float, dict]] = []
-        for _, row in results_df.iterrows():
-            score = float(row.get("_distance", 0.0))
+
+        for _, row in df.iterrows():
+            score = float(row.get("_distance", row.get("_score", 0.0)))
+
             meta = {
                 "filename": row["filename"],
                 "chunk": int(row["chunk"]),
                 "text": row["text"],
             }
+
             results.append((score, meta))
 
         return results
@@ -104,8 +111,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="search",
             description=(
-                "Semantic search across all contexts. Returns the most relevant passages "
-                "for a natural-language query. Optionally filter to a single file."
+                "Semantic search across all contexts. Returns relevant passages."
             ),
             inputSchema={
                 "type": "object",
@@ -113,12 +119,9 @@ async def list_tools() -> list[types.Tool]:
                     "query": {"type": "string"},
                     "filename": {
                         "type": "string",
-                        "description": "Optional: restrict search to this resource target.",
+                        "description": "Optional filter by filename",
                     },
-                    "top_k": {
-                        "type": "integer",
-                        "description": f"Number of results to return (default {TOP_K}).",
-                    },
+                    "top_k": {"type": "integer"},
                 },
                 "required": ["query"],
             },
@@ -128,7 +131,8 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    def _err(msg: str) -> list[types.TextContent]:
+
+    def err(msg: str):
         return [types.TextContent(type="text", text=f"Error: {msg}")]
 
     try:
@@ -138,9 +142,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return [types.TextContent(type="text", text=text)]
 
         elif name == "search":
-            query = arguments.get("query", "").strip()
+            query = (arguments.get("query") or "").strip()
             if not query:
-                return _err("'query' parameter requirement missing.")
+                return err("query required")
 
             top_k = int(arguments.get("top_k", TOP_K))
             filename_filter = arguments.get("filename")
@@ -153,15 +157,16 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 ]
 
             lines = [
-                f"[{m['filename']} | chunk {m['chunk']} | distance metric {s:.3f}]\n{m['text']}"
+                f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{m['text']}"
                 for s, m in results
             ]
+
             return [types.TextContent(type="text", text="\n\n---\n\n".join(lines))]
 
-        return _err(f"Action command context unknown: {name!r}")
+        return err(f"unknown tool: {name}")
 
     except Exception as exc:
-        return _err(f"Unexpected error executing tool '{name}': {exc}")
+        return err(f"Unexpected error: {exc}")
 
 
 session_manager = StreamableHTTPSessionManager(
@@ -175,7 +180,11 @@ session_manager = StreamableHTTPSessionManager(
 @asynccontextmanager
 async def lifespan(_app):
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _store.load)
+    ok = await loop.run_in_executor(None, _store.load)
+
+    if not ok:
+        raise RuntimeError("Failed to load LanceDB index")
+
     async with session_manager.run():
         yield
 

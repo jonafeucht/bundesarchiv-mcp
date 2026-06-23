@@ -44,7 +44,7 @@ jobs:
           python3 -c "
           import lancedb, sys
           db = lancedb.connect('${{ github.workspace }}/mcp-server/lancedb_index')
-          table_names = [t.name if hasattr(t, 'name') else t for t in db.list_tables()]
+          table_names = db.table_names()
           print('Tables:', table_names)
           if 'document_chunks' not in table_names:
               print('ERROR: table missing')

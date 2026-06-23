@@ -16,24 +16,22 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 
-def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
     words = text.split()
     stride = size - overlap
     chunks = []
+
     i = 0
     while i < len(words):
         chunks.append(" ".join(words[i : i + size]))
         i += stride
+
     return chunks
 
 
 def extract_text_from_pdf(path: Path) -> str:
     with fitz.open(path) as doc:
         return "".join(page.get_text() for page in doc)
-
-
-def table_names(db) -> list[str]:
-    return [t.name if hasattr(t, "name") else t for t in db.list_tables()]
 
 
 def main():
@@ -43,9 +41,11 @@ def main():
     model = SentenceTransformer(EMBED_MODEL)
 
     chunks = []
+
     for file_path in DATA_DIR.rglob("*"):
         if not file_path.is_file():
             continue
+
         if file_path.suffix.lower() not in [".pdf", ".txt", ".md"]:
             continue
 
@@ -58,16 +58,25 @@ def main():
             text = file_path.read_text(encoding="utf-8")
 
         for i, chunk in enumerate(chunk_text(text)):
-            chunks.append({"filename": relative_name, "chunk": i, "text": chunk})
+            chunks.append(
+                {
+                    "filename": relative_name,
+                    "chunk": i,
+                    "text": chunk,
+                }
+            )
 
     if not chunks:
         print("ERROR: No files found in", DATA_DIR)
         raise SystemExit(1)
 
     print(f"Embedding {len(chunks)} chunks...")
+
     texts = [c["text"] for c in chunks]
+
     embeddings = model.encode(
         texts,
+        batch_size=64,
         normalize_embeddings=True,
         convert_to_numpy=True,
         show_progress_bar=True,
@@ -78,10 +87,14 @@ def main():
 
     db = lancedb.connect(OUTPUT_DIR)
 
-    if TABLE_NAME in table_names(db):
+    existing_tables = db.table_names()
+
+    if TABLE_NAME in existing_tables:
+        print(f"Rebuilding table '{TABLE_NAME}'...")
         db.drop_table(TABLE_NAME)
 
     db.create_table(TABLE_NAME, data=pd.DataFrame(chunks))
+
     print(f"✔ Done. {len(chunks)} chunks written to '{TABLE_NAME}'")
 
 
