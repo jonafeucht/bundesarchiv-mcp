@@ -7,9 +7,9 @@ services:
       - .env
     volumes:
       - pdf_data:/app/pdfs
-      - faiss_data:/app/faiss_index
+      - lancedb_data:/app/lancedb_index
     restart: unless-stopped
 
 volumes:
   pdf_data:
-  faiss_data:
+  lancedb_data:

@@ -1,6 +1,6 @@
-# Akten der Reichskanzlei – Bundesarchiv MCP
+# MCP Server providing semantic retrieval
 
-MCP server for searching and extracting text from Bundesarchiv PDF documents, served over Streamable HTTP.
+An MCP Server providing semantic retrieval across a curated archive of historical documents from the Bundesarchiv, CIA FOIA, the Library of Congress, and more.
 
 ## Configuration
 
@@ -9,7 +9,6 @@ Copy `.env.example` to `.env` and adjust values:
 ```env
 MCP_API_KEY=your-secret-key
 USE_API_KEY=false
-INDEX_PATH=./faiss_index
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
 TOP_K=50
@@ -28,12 +27,12 @@ services:
       - .env
     volumes:
       - pdf_data:/app/pdfs
-      - faiss_data:/app/faiss_index
+      - lancedb_data:/app/lancedb_index
     restart: unless-stopped
 
 volumes:
   pdf_data:
-  faiss_data:
+  lancedb_data:
 ```
 
 ## Integration

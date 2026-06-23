@@ -35,6 +35,7 @@ jobs:
 
       - name: Install Ingestion Dependencies
         run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
 
       - name: Generate LanceDB Database

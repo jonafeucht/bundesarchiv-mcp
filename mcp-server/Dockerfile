@@ -1,6 +1,11 @@
-FROM python:3.12.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . /app
 
 RUN pip install --upgrade pip

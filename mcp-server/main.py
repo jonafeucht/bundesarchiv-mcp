@@ -36,7 +36,7 @@ class VectorStore:
         """Connects to the LanceDB instance and verifies the table exists."""
         try:
             self._db = lancedb.connect(self._db_uri)
-            if TABLE_NAME not in self._db.table_names():
+            if TABLE_NAME not in self._db.list_tables():
                 print(f"Error: Table '{TABLE_NAME}' missing at {self._db_uri}")
                 return False
             self._table = self._db.open_table(TABLE_NAME)
