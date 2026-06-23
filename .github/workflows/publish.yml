@@ -37,12 +37,33 @@ jobs:
           fi
 
       - name: Fetch Index from Latest Release
+        id: process-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p mcp-server/lancedb_index
-          # Try downloading from the latest existing release, ignore error if none exists
-          gh release download --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "No previous release index found."
+
+          PREV_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "Last successful release found: $PREV_TAG"
+
+            CHANGES=$(git diff --name-only "$PREV_TAG" HEAD -- mcp-data/ ingest.py)
+            if [ -z "$CHANGES" ]; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "No changes in data or ingestion script since $PREV_TAG."
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "Changes detected since $PREV_TAG."
+            fi
+
+            echo "Attempting to download index from $PREV_TAG..."
+            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "No asset found in $PREV_TAG."
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "No previous successful release found. Forcing generation."
+          fi
+
           if [ -f mcp-server/lancedb_index.tar.gz ]; then
             tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index.tar.gz
