@@ -62,7 +62,7 @@ jobs:
         if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
+          pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
 
       - name: Generate/Update LanceDB Database
         if: env.index_exists == 'false' || steps.check-changes.outputs.changed == 'true'
