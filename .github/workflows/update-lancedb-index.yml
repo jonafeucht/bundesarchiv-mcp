@@ -86,7 +86,7 @@ jobs:
           fi
 
           CURRENT_DATE=$(date +'%Y-%m-%d')
-          NEW_TITLE="LanceDB Index Update $LATEST_TAG ($CURRENT_DATE)"
+          NEW_TITLE="LanceDB Index Update ($CURRENT_DATE)"
 
           echo "Updating release title to: $NEW_TITLE"
           gh release edit "$LATEST_TAG" --title "$NEW_TITLE"
