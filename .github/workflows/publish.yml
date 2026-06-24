@@ -73,6 +73,8 @@ jobs:
         run: |
           docker buildx imagetools create \
             -t ghcr.io/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
+            -t ghcr.io/${{ env.IMAGE_NAME }}:latest \
             -t ${{ env.DOCKERHUB_IMAGE }}:${{ github.ref_name }} \
+            -t ${{ env.DOCKERHUB_IMAGE }}:latest \
             ghcr.io/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-amd64 \
             ghcr.io/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-arm64
