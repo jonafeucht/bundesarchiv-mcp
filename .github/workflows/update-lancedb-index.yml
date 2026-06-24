@@ -2,9 +2,11 @@ name: Update LanceDB Index
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - feat-lancedb
     paths:
       - "mcp-data/**"
-
 jobs:
   update-index:
     runs-on: ubuntu-latest
@@ -13,7 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Fetch Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -28,24 +29,20 @@ jobs:
             tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index.tar.gz
           fi
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
-
       - name: Install dependencies
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
-
       - name: Generate/Update LanceDB Index
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
-
       - name: Upload index to latest release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
