@@ -29,6 +29,16 @@
 - [REAGAN OPENS CAMPAIGN FOR AID TO CONTRAS](https://www.cia.gov/readingroom/document/cia-rdp90-00965r000100450026-7)
 - [Freedom in the Americas](https://www.refworld.org/reference/countryrep/freehou/2006/49896)
 - [The Worst of the Worst: The World's Most Repressive Societies 2005](https://www.ecoi.net/de/dokument/1045503.html)
+- [Nicolás Maduro Reward Poster ($50M)](https://www.state.gov/wp-content/uploads/2025/08/2025-8-1-English-Poster-for-Nicolas-Maduro-Moros-Accessible-Clean.pdf)
+- [U.S. Indictment of Top Venezuelan Officials](https://www.congress.gov/crs_external_products/IN/PDF/IN11306/IN11306.2.pdf)
+
+## Iran
+- [HRANA – The Crimson Winter](https://www.en-hrana.org/the-crimson-winter-a-50-day-record-of-irans-2025-2026-nationwide-protests)
+- [Protests in Iran: Possible U.S. Responses and Issues for Congress](https://www.congress.gov/crs_external_products/IF/PDF/IF13153/IF13153.6.pdf)
+- [PRIMER: Iran Protests](https://vandenbergcoalition.org/wp-content/uploads/2026/01/Iran-2026-Protests-Primer.pdf)
+- [UK Home Office bulletin (Iran protests Jan 2026)](https://assets.publishing.service.gov.uk/media/69eb6a1f20a498c16734af59/IRN_Country_Bulletin_Protests_of_December_2025_to_January_2026.pdf)
+- [The situation of human rights in the Islamic Republic of Iran, especially in the context of the repression of nationwide protests starting on 28 December 2025 : resolution / adopted by the Human Rights Council on 23 January 2026](https://digitallibrary.un.org/record/4103600?v=pdf)
+- [Over 36,500 killed in Iran's deadliest massacre, documents reveal](https://www.iranintl.com/en/202601255198)
 
 ## US Government
 - [CIA FOIA](https://www.cia.gov/readingroom/)

@@ -1,0 +1,60 @@
+name: Update LanceDB Index
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "mcp-data/**"
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Index from Latest Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p mcp-server/lancedb_index
+          PREV_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous release: $PREV_TAG — downloading index..."
+            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "Asset not found."
+          fi
+          if [ -f mcp-server/lancedb_index.tar.gz ]; then
+            tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
+            rm mcp-server/lancedb_index.tar.gz
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
+
+      - name: Generate/Update LanceDB Index
+        env:
+          PDF_DIR: ${{ github.workspace }}/mcp-data
+          DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
+        run: python3 ingest.py
+
+      - name: Upload index to latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
+          LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
+          if [ -z "$LATEST_TAG" ]; then
+            echo "ERROR: No release found to upload index to." >&2
+            exit 1
+          fi
+          echo "Uploading index to release: $LATEST_TAG"
+          gh release upload "$LATEST_TAG" lancedb_index.tar.gz --clobber

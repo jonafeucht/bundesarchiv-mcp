@@ -17,48 +17,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch Index from Latest Release
-        id: process-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p mcp-server/lancedb_index
-
-          # Get the tag of the latest actual successful release (skipping drafts/pre-releases)
-          PREV_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
-
-          if [ -n "$PREV_TAG" ]; then
-            echo "Last successful release found: $PREV_TAG. Downloading index..."
-            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "Asset not found in $PREV_TAG."
-          else
-            echo "No previous successful release found."
-          fi
-
-          if [ -f mcp-server/lancedb_index.tar.gz ]; then
-            tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
-            rm mcp-server/lancedb_index.tar.gz
-            echo "Downloaded and extracted previous index successfully."
-          else
-            echo "Proceeding with a fresh index directory."
-          fi
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
-
-      - name: Generate/Update LanceDB Database
-        env:
-          PDF_DIR: ${{ github.workspace }}/mcp-data
-          DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
-        run: python3 ingest.py
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -98,13 +56,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Create GitHub Release & Upload Index
+      - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Package the index directory as a single archive asset
-          tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
-
-          # Create the release if it doesn't exist, or update it, then upload the asset
-          gh release create ${{ github.ref_name }} lancedb_index.tar.gz --title "${{ github.ref_name }}" --notes "Automated release with LanceDB index." || \
-          gh release upload ${{ github.ref_name }} lancedb_index.tar.gz --clobber
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --notes "Automated release." \
+          || echo "Release already exists, skipping."
