@@ -62,10 +62,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
       - name: Install dependencies
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install lancedb==0.33.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==7.0.0
+
       - name: Generate/Update LanceDB Index
         env:
           PDF_DIR: ${{ github.workspace }}/mcp-data
@@ -76,10 +78,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tar -czf lancedb_index.tar.gz -C mcp-server lancedb_index
+
           LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
           if [ -z "$LATEST_TAG" ]; then
             echo "ERROR: No release found to upload index to." >&2
             exit 1
           fi
+
+          CURRENT_DATE=$(date +'%Y-%m-%d')
+          NEW_TITLE="LanceDB Index Update $LATEST_TAG ($CURRENT_DATE)"
+
+          echo "Updating release title to: $NEW_TITLE"
+          gh release edit "$LATEST_TAG" --title "$NEW_TITLE"
+
           echo "Uploading index to release: $LATEST_TAG"
           gh release upload "$LATEST_TAG" lancedb_index.tar.gz --clobber
