@@ -39,6 +39,7 @@ class VectorStore:
         self._db_uri = db_uri
         self._db = None
         self._table = None
+        self._cached_filenames: list[str] = []
 
     def load(self) -> bool:
         try:
@@ -51,18 +52,15 @@ class VectorStore:
             self._table = self._db.open_table(TABLE_NAME)
 
             print(f"Ready: LanceDB connected. Table size={len(self._table)}")
+            self._refresh_filename_cache()
             return True
 
         except Exception as e:
             print(f"Failed to load LanceDB: {e}")
             return False
 
-    def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
-        if self._table is None:
-            return []
-
-        offset = (page - 1) * per_page
-
+    def _refresh_filename_cache(self):
+        """Pre-aggregates distinct files so list_pdfs pagination is instant."""
         try:
             df = (
                 self._table.search()
@@ -70,19 +68,28 @@ class VectorStore:
                 .select(["filename"])
                 .to_pandas()
             )
-
-            unique_files = sorted(df["filename"].dropna().unique().tolist())
-
-            return unique_files[offset : offset + per_page]
-
+            self._cached_filenames = sorted(df["filename"].dropna().unique().tolist())
         except Exception as e:
-            print(f"Error listing PDFs: {e}")
-            return []
+            print(f"Failed to refresh cache: {e}")
+            self._cached_filenames = []
+
+    def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
+        if not self._cached_filenames and self._table is not None:
+            self._refresh_filename_cache()
+
+        page = max(page, 1)
+        per_page = max(min(per_page, 100), 1)
+        offset = (page - 1) * per_page
+        return self._cached_filenames[offset : offset + per_page]
+
+    def total_files_count(self) -> int:
+        return len(self._cached_filenames)
 
     def search(
         self,
         query: str,
         top_k: int = TOP_K,
+        offset: int = 0,
         filename_filter: str | None = None,
     ) -> list[tuple[float, dict]]:
         if self._table is None:
@@ -90,18 +97,17 @@ class VectorStore:
 
         query_vec = self._model.encode(query, normalize_embeddings=True).tolist()
 
-        qb = self._table.search(query_vec).limit(top_k)
+        qb = self._table.search(query_vec).limit(offset + top_k)
 
         if filename_filter:
-            qb = qb.where(f"filename = '{filename_filter}'")
+            safe_filter = filename_filter.replace("'", "''")
+            qb = qb.where(f"filename = '{safe_filter}'")
 
         df = qb.to_pandas()
-
         results: list[tuple[float, dict]] = []
 
         for _, row in df.iterrows():
             score = float(row.get("_distance", row.get("_score", 0.0)))
-
             results.append(
                 (
                     score,
@@ -113,7 +119,7 @@ class VectorStore:
                 )
             )
 
-        return results
+        return results[offset : offset + top_k]
 
 
 _store = VectorStore(EMBED_MODEL, DB_URI)
@@ -144,7 +150,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search",
-            description="Semantic search across all contexts. Returns relevant passages.",
+            description="Semantic search across all contexts. Supports paginating deeper chunks via offset.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -153,7 +159,15 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Optional filter by filename",
                     },
-                    "top_k": {"type": "integer"},
+                    "top_k": {
+                        "type": "integer",
+                        "description": f"Number of records to return on this page (max {TOP_K}).",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of records to skip. Use multiples of top_k (e.g., 5, 10) to view next pages.",
+                        "default": 0,
+                    },
                 },
                 "required": ["query"],
             },
@@ -163,7 +177,6 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-
     def err(msg: str):
         return [types.TextContent(type="text", text=f"Error: {msg}")]
 
@@ -173,9 +186,16 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             per_page = min(max(int(arguments.get("per_page", 50)), 1), 100)
 
             pdfs = _store.list_pdfs(page=page, per_page=per_page)
+            total_count = _store.total_files_count()
+            total_pages = (total_count + per_page - 1) // per_page
 
             if pdfs:
-                text = f"--- Page {page} ---\n" + "\n".join(pdfs)
+                text = (
+                    f"--- Page {page} of {total_pages} (Total files: {total_count}) ---\n"
+                    + "\n".join(pdfs)
+                )
+                if page < total_pages:
+                    text += f"\n\n[SYSTEM NOTE]: More files exist. To see the next files, call 'list_pdfs' with page={page + 1}."
             else:
                 text = f"(No files found on page {page})"
 
@@ -186,42 +206,35 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if not query:
                 return err("query required")
 
-            top_k = min(int(arguments.get("top_k", TOP_K)), TOP_K)
+            top_k = min(max(int(arguments.get("top_k", TOP_K)), 1), TOP_K)
+            offset = max(int(arguments.get("offset", 0)), 0)
             filename_filter = arguments.get("filename")
 
             results = _store.search(
                 query,
                 top_k=top_k,
+                offset=offset,
                 filename_filter=filename_filter,
             )
 
             if not results:
                 return [
-                    types.TextContent(
-                        type="text",
-                        text="No semantic records matched.",
-                    )
+                    types.TextContent(type="text", text="No semantic records matched.")
                 ]
 
             lines = []
-
             for s, m in results:
                 text = (m.get("text", "") or "")[:MAX_CHARS_PER_CHUNK]
-
                 item = f"[{m['filename']} | chunk {m['chunk']} | score {s:.3f}]\n{text}"
-
                 lines.append(item)
 
             safe_lines = apply_token_budget(lines, MAX_CONTEXT_TOKENS)
-
             final_text = "\n\n---\n\n".join(safe_lines)
 
-            return [
-                types.TextContent(
-                    type="text",
-                    text=final_text,
-                )
-            ]
+            if len(results) == top_k:
+                final_text += f"\n\n[SYSTEM NOTE]: Additional context matches are available. To paginate, execute the search again with offset={offset + top_k}."
+
+            return [types.TextContent(type="text", text=final_text)]
 
         return err(f"unknown tool: {name}")
 

@@ -20,6 +20,16 @@
 ## Cambodia
 - [Documentation Center of Cambodia](https://databases.dccam.org/)
 
+## Latin America
+- [Latin America: An Agenda for Freedom](https://www.heritage.org/americas/report/latin-america-agenda-freedom)
+- [U.S.-Latin America Ties Need Commitment and Strategy](https://www.heritage.org/americas/report/us-latin-america-ties-need-commitment-and-strategy-0)
+- [Toward the Next American Century: Building a New Partnership withLatin America](https://www.heritage.org/americas/report/toward-the-next-american-century-building-new-partnership-withlatin-america)
+- [Ecuador: Is Correa Following Chávez Down the Road to Serfdom?](https://www.policyarchive.org/handle/10207/13094)
+- [U.S. Interests in Latin America](https://www.heritage.org/americas/report/us-interests-latin-america)
+- [REAGAN OPENS CAMPAIGN FOR AID TO CONTRAS](https://www.cia.gov/readingroom/document/cia-rdp90-00965r000100450026-7)
+- [Freedom in the Americas](https://www.refworld.org/reference/countryrep/freehou/2006/49896)
+- [The Worst of the Worst: The World's Most Repressive Societies 2005](https://www.ecoi.net/de/dokument/1045503.html)
+
 ## US Government
 - [CIA FOIA](https://www.cia.gov/readingroom/)
 
