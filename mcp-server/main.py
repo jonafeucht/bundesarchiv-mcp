@@ -40,6 +40,7 @@ class VectorStore:
         self._db = None
         self._table = None
         self._cached_filenames: list[str] = []
+        self._cached_foldernames: list[str] = []
 
     def load(self) -> bool:
         try:
@@ -52,15 +53,15 @@ class VectorStore:
             self._table = self._db.open_table(TABLE_NAME)
 
             print(f"Ready: LanceDB connected. Table size={len(self._table)}")
-            self._refresh_filename_cache()
+            self._refresh_caches()
             return True
 
         except Exception as e:
             print(f"Failed to load LanceDB: {e}")
             return False
 
-    def _refresh_filename_cache(self):
-        """Pre-aggregates distinct files so list_pdfs pagination is instant."""
+    def _refresh_caches(self):
+        """Pre-aggregates distinct files and isolates unique parent folders."""
         try:
             df = (
                 self._table.search()
@@ -68,14 +69,34 @@ class VectorStore:
                 .select(["filename"])
                 .to_pandas()
             )
-            self._cached_filenames = sorted(df["filename"].dropna().unique().tolist())
+            unique_files = df["filename"].dropna().unique().tolist()
+            self._cached_filenames = sorted(unique_files)
+
+            folders = set()
+            for path_str in unique_files:
+                parts = Path(path_str).parts
+                if len(parts) > 1:
+                    folders.add(parts[0])
+
+            self._cached_foldernames = sorted(list(folders))
+            print(
+                f"Cache Refreshed: {len(self._cached_filenames)} files, {len(self._cached_foldernames)} categories found."
+            )
+
         except Exception as e:
             print(f"Failed to refresh cache: {e}")
             self._cached_filenames = []
+            self._cached_foldernames = []
+
+    def get_topics_string(self) -> str:
+        """Returns all distinct isolated foldernames for the LLM system prompt context."""
+        if not self._cached_foldernames:
+            return "historical documents, federal files, or archive topics"
+        return ", ".join(self._cached_foldernames)
 
     def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
         if not self._cached_filenames and self._table is not None:
-            self._refresh_filename_cache()
+            self._refresh_caches()
 
         page = max(page, 1)
         per_page = max(min(per_page, 100), 1)
@@ -96,12 +117,13 @@ class VectorStore:
             return []
 
         query_vec = self._model.encode(query, normalize_embeddings=True).tolist()
-
         qb = self._table.search(query_vec).limit(offset + top_k)
 
         if filename_filter:
             safe_filter = filename_filter.replace("'", "''")
-            qb = qb.where(f"filename = '{safe_filter}'")
+            qb = qb.where(
+                f"filename = '{safe_filter}' OR filename LIKE '{safe_filter}/%'"
+            )
 
         df = qb.to_pandas()
         results: list[tuple[float, dict]] = []
@@ -128,10 +150,15 @@ server = Server("Akten für das Bundesarchiv")
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
+    topics = _store.get_topics_string()
+
     return [
         types.Tool(
             name="list_pdfs",
-            description="List available indexed files with pagination.",
+            description=(
+                "List available indexed files/folders within the archive with pagination. "
+                "Call this if the user asks explicitly what specific documents, files, indices, or folders are available."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -150,14 +177,21 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search",
-            description="Semantic search across all contexts. Supports paginating deeper chunks via offset.",
+            description=(
+                f"Mandatory tool for fetching historical records. Automatically invoke this semantic search tool "
+                f"whenever the user asks any contextual, analytical, or factual question regarding these historical archive categories: [{topics}]. "
+                f"Transform the user's focus prompt into relevant search keywords."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
+                    "query": {
+                        "type": "string",
+                        "description": "The search term or query statement derived from user interest.",
+                    },
                     "filename": {
                         "type": "string",
-                        "description": "Optional filter by filename",
+                        "description": "Optional category folder filtering (e.g., 'Mojahedin-e-Khalq' or '1968-Studentenbewegung').",
                     },
                     "top_k": {
                         "type": "integer",
