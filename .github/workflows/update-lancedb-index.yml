@@ -15,20 +15,48 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Fetch Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p mcp-server/lancedb_index
-          PREV_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
-          if [ -n "$PREV_TAG" ]; then
-            echo "Previous release: $PREV_TAG — downloading index..."
-            gh release download "$PREV_TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ || echo "Asset not found."
-          fi
+
+          # Iterate through releases until we find one with the index asset
+          PAGE=1
+          FOUND=false
+          while [ "$FOUND" = "false" ]; do
+            TAGS=$(gh release list --limit 20 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' 2>/dev/null || echo "")
+            if [ -z "$TAGS" ]; then
+              echo "No more releases to check."
+              break
+            fi
+
+            while IFS= read -r TAG; do
+              echo "Checking release $TAG for index asset..."
+              if gh release download "$TAG" --pattern "lancedb_index.tar.gz" --dir mcp-server/ 2>/dev/null; then
+                echo "Found index in release $TAG."
+                FOUND=true
+                break
+              fi
+            done <<EOF
+          $TAGS
+          EOF
+
+            [ "$FOUND" = "true" ] && break
+            PAGE=$((PAGE + 1))
+            # gh release list doesn't support --page, so we break if first 20 all failed
+            echo "No index found in these releases, stopping search."
+            break
+          done
+
           if [ -f mcp-server/lancedb_index.tar.gz ]; then
             tar -xzf mcp-server/lancedb_index.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index.tar.gz
+          else
+            echo "No index asset found in any release, proceeding with fresh index."
           fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
