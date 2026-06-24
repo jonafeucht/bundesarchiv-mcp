@@ -5,6 +5,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -14,8 +15,8 @@ RUN pip install --upgrade pip && \
 
 COPY . /app
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 

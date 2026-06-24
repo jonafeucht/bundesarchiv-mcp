@@ -6,12 +6,10 @@ REPO="jonafeucht/bundesarchiv-mcp"
 
 echo "Fetching LanceDB index from latest GitHub Release..."
 
-DOWNLOAD_URL=$(curl -fsSL \
-  "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep -o '"browser_download_url": *"[^"]*lancedb_index\.tar\.gz"' \
-  | grep -o 'https://[^"]*')
+DOWNLOAD_URL=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  | jq -r '.assets[] | select(.name == "lancedb_index.tar.gz") | .browser_download_url')
 
-if [ -z "$DOWNLOAD_URL" ]; then
+if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
   echo "ERROR: Could not find lancedb_index.tar.gz in the latest release." >&2
   exit 1
 fi
