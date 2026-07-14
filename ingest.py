@@ -1,8 +1,8 @@
 import hashlib
 import os
 from pathlib import Path
-import concurrent.futures
 import multiprocessing
+import queue
 
 import fitz
 import lancedb
@@ -51,12 +51,36 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
-def extract_text_from_pdf(path: Path) -> str:
+def _pdf_worker_target(path: Path, out_queue: multiprocessing.Queue):
     try:
         with fitz.open(path) as doc:
-            return "".join(page.get_text() for page in doc)
+            text = "".join(page.get_text() for page in doc)
+        out_queue.put(("SUCCESS", text))
     except Exception as e:
-        return f"__ERROR__: {str(e)}"
+        out_queue.put(("ERROR", str(e)))
+
+
+def extract_text_from_pdf_with_hard_kill(path: Path) -> str:
+    ctx = multiprocessing.get_context("spawn")
+    out_queue = ctx.Queue()
+
+    p = ctx.Process(target=_pdf_worker_target, args=(path, out_queue))
+    p.start()
+
+    try:
+        status, result = out_queue.get(timeout=FILE_TIMEOUT_SECONDS)
+        p.join()
+
+        if status == "ERROR":
+            raise RuntimeError(result)
+        return result
+
+    except queue.Empty:
+        p.terminate()
+        p.join()
+        raise TimeoutError(
+            f"PDF extraction hung and was forcefully terminated after {FILE_TIMEOUT_SECONDS}s"
+        )
 
 
 def read_text_file(path: Path) -> str:
@@ -65,19 +89,6 @@ def read_text_file(path: Path) -> str:
             f"File size exceeds 50MB limit ({path.stat().st_size / 1024 / 1024:.2f} MB)"
         )
     return path.read_text(encoding="utf-8", errors="ignore")
-
-
-def process_single_file_with_timeout(file_path: Path, executor) -> str:
-    if file_path.suffix.lower() == ".pdf":
-        future = executor.submit(extract_text_from_pdf, file_path)
-        try:
-            return future.result(timeout=FILE_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(
-                f"PDF extraction timed out after {FILE_TIMEOUT_SECONDS}s"
-            )
-    else:
-        return read_text_file(file_path)
 
 
 def flush_to_db(db, table, rows):
@@ -160,46 +171,42 @@ def main():
     processed = 0
     skipped = 0
 
-    ctx = multiprocessing.get_context("spawn")
+    for file_path, file_hash in tqdm(
+        files_to_process, desc="Processing Files", unit="file"
+    ):
+        relative_name = str(file_path.relative_to(DATA_DIR))
 
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=min(4, multiprocessing.cpu_count()), mp_context=ctx
-    ) as executor:
-        for file_path, file_hash in tqdm(
-            files_to_process, desc="Processing Files", unit="file"
-        ):
-            relative_name = str(file_path.relative_to(DATA_DIR))
+        try:
+            if file_path.suffix.lower() == ".pdf":
+                text = extract_text_from_pdf_with_hard_kill(file_path)
+            else:
+                text = read_text_file(file_path)
+        except Exception as e:
+            print(f"\n⚠️ Skipped: {relative_name} | Reason: {e}")
+            skipped += 1
+            continue
 
-            try:
-                text = process_single_file_with_timeout(file_path, executor)
-                if text.startswith("__ERROR__"):
-                    raise RuntimeError(text.replace("__ERROR__: ", ""))
-            except Exception as e:
-                print(f"\n⚠️ Skipped: {relative_name} | Reason: {e}")
-                skipped += 1
-                continue
+        chunks = chunk_text(text)
+        if not chunks:
+            continue
 
-            chunks = chunk_text(text)
-            if not chunks:
-                continue
+        for i, chunk in enumerate(chunks):
+            pending_rows.append(
+                {
+                    "filename": relative_name,
+                    "file_hash": file_hash,
+                    "chunk": i,
+                    "text": chunk,
+                }
+            )
 
-            for i, chunk in enumerate(chunks):
-                pending_rows.append(
-                    {
-                        "filename": relative_name,
-                        "file_hash": file_hash,
-                        "chunk": i,
-                        "text": chunk,
-                    }
-                )
+        processed += 1
 
-            processed += 1
+        if len(pending_rows) >= DB_FLUSH_ROWS:
+            table = flush_to_db(db, table, pending_rows)
+            pending_rows = []
 
-            if len(pending_rows) >= DB_FLUSH_ROWS:
-                table = flush_to_db(db, table, pending_rows)
-                pending_rows = []
-
-        table = flush_to_db(db, table, pending_rows)
+    table = flush_to_db(db, table, pending_rows)
 
     print(
         f"🎉 Done! Index updated successfully. Processed {processed} file(s), skipped {skipped}."
