@@ -7,3 +7,4 @@ sentence-transformers==5.6.0
 pandas==3.0.3
 pylance==8.0.0
 tiktoken==0.13.0
+peft==0.19.1
