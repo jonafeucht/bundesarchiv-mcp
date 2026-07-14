@@ -52,8 +52,20 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install "sentence-transformers[onnx]" optimum onnxruntime
-          pip install lancedb==0.34.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn pylance==8.0.0 peft==0.19.1 tqdm==4.68.4
+          pip install \
+            "sentence-transformers[onnx]" \
+            optimum \
+            onnxruntime \
+            lancedb==0.34.0 \
+            pandas \
+            pymupdf \
+            numpy \
+            python-dotenv \
+            mcp \
+            starlette \
+            uvicorn \
+            peft==0.19.1 \
+            tqdm==4.68.4
 
       - name: Generate/Update LanceDB Index
         env:
