@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import multiprocessing
 import queue
+import time
 
 import fitz
 import lancedb
@@ -51,36 +52,72 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
-def _pdf_worker_target(path: Path, out_queue: multiprocessing.Queue):
-    try:
-        with fitz.open(path) as doc:
-            text = "".join(page.get_text() for page in doc)
-        out_queue.put(("SUCCESS", text))
-    except Exception as e:
-        out_queue.put(("ERROR", str(e)))
+def _pdf_worker_loop(in_queue: multiprocessing.Queue, out_queue: multiprocessing.Queue):
+    while True:
+        try:
+            path = in_queue.get()
+            if path is None:
+                break
+
+            with fitz.open(path) as doc:
+                text = "".join(page.get_text() for page in doc)
+            out_queue.put(("SUCCESS", text))
+        except Exception as e:
+            out_queue.put(("ERROR", str(e)))
 
 
-def extract_text_from_pdf_with_hard_kill(path: Path) -> str:
-    ctx = multiprocessing.get_context("spawn")
-    out_queue = ctx.Queue()
+class SafePDFExtractor:
+    def __init__(self):
+        self.ctx = multiprocessing.get_context("spawn")
+        self.in_queue = self.ctx.Queue()
+        self.out_queue = self.ctx.Queue()
+        self.worker = None
+        self._start_worker()
 
-    p = ctx.Process(target=_pdf_worker_target, args=(path, out_queue))
-    p.start()
-
-    try:
-        status, result = out_queue.get(timeout=FILE_TIMEOUT_SECONDS)
-        p.join()
-
-        if status == "ERROR":
-            raise RuntimeError(result)
-        return result
-
-    except queue.Empty:
-        p.terminate()
-        p.join()
-        raise TimeoutError(
-            f"PDF extraction hung and was forcefully terminated after {FILE_TIMEOUT_SECONDS}s"
+    def _start_worker(self):
+        self.worker = self.ctx.Process(
+            target=_pdf_worker_loop, args=(self.in_queue, self.out_queue)
         )
+        self.worker.daemon = True
+        self.worker.start()
+
+    def extract(self, path: Path) -> str:
+        while not self.in_queue.empty():
+            try:
+                self.in_queue.get_nowait()
+            except queue.Empty:
+                break
+        while not self.out_queue.empty():
+            try:
+                self.out_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        self.in_queue.put(path)
+
+        try:
+            status, result = self.out_queue.get(timeout=FILE_TIMEOUT_SECONDS)
+            if status == "ERROR":
+                raise RuntimeError(result)
+            return result
+        except queue.Empty:
+            print(
+                f"\n🚨 {path.name} timed out (> {FILE_TIMEOUT_SECONDS}s). Forcefully restarting worker..."
+            )
+            self.worker.terminate()
+            self.worker.join()
+            self._start_worker()
+            raise TimeoutError(f"PDF extraction hung on {path.name} and was skipped.")
+
+    def close(self):
+        if self.worker and self.worker.is_alive():
+            try:
+                self.in_queue.put(None)
+                self.worker.join(timeout=2)
+            except Exception:
+                pass
+            if self.worker.is_alive():
+                self.worker.terminate()
 
 
 def read_text_file(path: Path) -> str:
@@ -171,42 +208,48 @@ def main():
     processed = 0
     skipped = 0
 
-    for file_path, file_hash in tqdm(
-        files_to_process, desc="Processing Files", unit="file"
-    ):
-        relative_name = str(file_path.relative_to(DATA_DIR))
+    extractor = SafePDFExtractor()
 
-        try:
-            if file_path.suffix.lower() == ".pdf":
-                text = extract_text_from_pdf_with_hard_kill(file_path)
-            else:
-                text = read_text_file(file_path)
-        except Exception as e:
-            print(f"\n⚠️ Skipped: {relative_name} | Reason: {e}")
-            skipped += 1
-            continue
+    try:
+        for file_path, file_hash in tqdm(
+            files_to_process, desc="Processing Files", unit="file"
+        ):
+            relative_name = str(file_path.relative_to(DATA_DIR))
 
-        chunks = chunk_text(text)
-        if not chunks:
-            continue
+            try:
+                if file_path.suffix.lower() == ".pdf":
+                    text = extractor.extract(file_path)
+                else:
+                    text = read_text_file(file_path)
+            except Exception as e:
+                print(f"\n⚠️ Skipped: {relative_name} | Reason: {e}")
+                skipped += 1
+                continue
 
-        for i, chunk in enumerate(chunks):
-            pending_rows.append(
-                {
-                    "filename": relative_name,
-                    "file_hash": file_hash,
-                    "chunk": i,
-                    "text": chunk,
-                }
-            )
+            chunks = chunk_text(text)
+            if not chunks:
+                continue
 
-        processed += 1
+            for i, chunk in enumerate(chunks):
+                pending_rows.append(
+                    {
+                        "filename": relative_name,
+                        "file_hash": file_hash,
+                        "chunk": i,
+                        "text": chunk,
+                    }
+                )
 
-        if len(pending_rows) >= DB_FLUSH_ROWS:
-            table = flush_to_db(db, table, pending_rows)
-            pending_rows = []
+            processed += 1
 
-    table = flush_to_db(db, table, pending_rows)
+            if len(pending_rows) >= DB_FLUSH_ROWS:
+                table = flush_to_db(db, table, pending_rows)
+                pending_rows = []
+
+        table = flush_to_db(db, table, pending_rows)
+
+    finally:
+        extractor.close()
 
     print(
         f"🎉 Done! Index updated successfully. Processed {processed} file(s), skipped {skipped}."
