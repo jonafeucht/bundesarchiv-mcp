@@ -1,7 +1,6 @@
 import hashlib
 import os
 from pathlib import Path
-import torch
 
 import fitz
 import lancedb
@@ -49,18 +48,13 @@ def main():
     print("🔍 Scanning files in", DATA_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else ("mps" if torch.backends.mps.is_available() else "cpu")
-    )
-    print(f"📥 Loading embedding model on [{device.upper()}]...")
+    print("📥 Loading embedding model with ONNX optimization...")
 
     model = SentenceTransformer(
         EMBED_MODEL,
         trust_remote_code=True,
+        backend="onnx",
         model_kwargs={"default_task": "retrieval"},
-        device=device,
     )
 
     db = lancedb.connect(OUTPUT_DIR)
