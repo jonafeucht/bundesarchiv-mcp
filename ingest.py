@@ -101,42 +101,44 @@ def main():
         print("No new or changed files found.")
         return
 
-    print(f"Embedding {len(new_chunks)} chunks...")
+    print(f"Embedding {len(new_chunks)} chunks in increments...")
 
-    texts = [c["text"] for c in new_chunks]
+    db_batch_size = 1000
 
-    embeddings = model.encode(
-        texts,
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-        batch_size=64,
-        show_progress_bar=True,
-    ).astype("float32")
+    for idx in range(0, len(new_chunks), db_batch_size):
+        batch = new_chunks[idx : idx + db_batch_size]
+        batch_texts = [c["text"] for c in batch]
 
-    for i, emb in enumerate(embeddings):
-        new_chunks[i]["vector"] = emb.tolist()
+        embeddings = model.encode(
+            batch_texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            batch_size=16,
+            show_progress_bar=False,
+        ).astype("float32")
 
-    df = pd.DataFrame(new_chunks)
+        for j, emb in enumerate(embeddings):
+            batch[j]["vector"] = emb.tolist()
 
-    if table is None:
-        print("Creating table...")
-        db.create_table(TABLE_NAME, data=df)
-    else:
-        print("Appending to existing table...")
-        try:
-            table.add(df)
-        except ValueError as e:
-            if "Cast error" in str(e) or "Cannot cast" in str(e):
-                print(
-                    "\nSchema mismatch detected (likely due to a change in embedding model dimensions)."
-                )
-                print("Re-creating the table structure cleanly from scratch...")
-                db.drop_table(TABLE_NAME)
-                db.create_table(TABLE_NAME, data=df)
-            else:
-                raise e
+        df = pd.DataFrame(batch)
 
-    print(f"✔ Done. Added {len(new_chunks)} new chunks.")
+        if table is None:
+            print("Creating table with initial batch...")
+            table = db.create_table(TABLE_NAME, data=df)
+        else:
+            try:
+                table.add(df)
+            except ValueError as e:
+                if "Cast error" in str(e) or "Cannot cast" in str(e):
+                    print("\nSchema mismatch detected. Re-creating table...")
+                    db.drop_table(TABLE_NAME)
+                    table = db.create_table(TABLE_NAME, data=df)
+                else:
+                    raise e
+
+        print(f"Indexed chunks {idx} to {idx + len(batch)}...")
+
+    print(f"✔ Done. Successfully processed all {len(new_chunks)} chunks.")
 
 
 if __name__ == "__main__":
