@@ -123,7 +123,18 @@ def main():
         db.create_table(TABLE_NAME, data=df)
     else:
         print("Appending to existing table...")
-        table.add(df)
+        try:
+            table.add(df)
+        except ValueError as e:
+            if "Cast error" in str(e) or "Cannot cast" in str(e):
+                print(
+                    "\nSchema mismatch detected (likely due to a change in embedding model dimensions)."
+                )
+                print("Re-creating the table structure cleanly from scratch...")
+                db.drop_table(TABLE_NAME)
+                db.create_table(TABLE_NAME, data=df)
+            else:
+                raise e
 
     print(f"✔ Done. Added {len(new_chunks)} new chunks.")
 
