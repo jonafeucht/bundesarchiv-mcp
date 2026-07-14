@@ -56,6 +56,5 @@
 - [Vietnamese Ambassador disrupted from speaking at New York University (1968-12-05)](https://commons.wikimedia.org/wiki/File:Vietnamese_Ambassador_disrupted_from_speaking_at_New_York_University_(1968-12-05).pdf)
 - [The South Vietnamese Society by Nguyen Duy Hinh and Tran Dinh Tho](https://commons.wikimedia.org/wiki/File:The_South_Vietnamese_Society_by_Nguyen_Duy_Hinh_and_Tran_Dinh_Tho.pdf)
 
-
 ## WW2 Germany
 - [Operation Gomorrah](https://www.airandspaceforces.com/PDF/MagazineArchive/Documents/2007/March%202007/0307gomorrah.pdf)

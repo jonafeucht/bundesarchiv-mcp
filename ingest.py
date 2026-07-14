@@ -1,9 +1,10 @@
+import gc
 import hashlib
 import os
-from pathlib import Path
 import multiprocessing
 import queue
 import time
+from pathlib import Path
 
 import fitz
 import lancedb
@@ -11,6 +12,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
+# --- Configuration ---
 DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
 
@@ -23,7 +25,7 @@ CHUNK_OVERLAP = 50
 EMBED_BATCH_SIZE = 16
 DB_FLUSH_ROWS = 500
 HASH_READ_CHUNK = 1024 * 1024
-FILE_TIMEOUT_SECONDS = 15
+FILE_TIMEOUT_SECONDS = 20
 MAX_TEXT_SIZE_BYTES = 50 * 1024 * 1024
 
 
@@ -52,31 +54,42 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
-def _pdf_worker_loop(in_queue: multiprocessing.Queue, out_queue: multiprocessing.Queue):
+def _pdf_worker_loop(in_queue: multiprocessing.Queue, conn):
     while True:
         try:
             path = in_queue.get()
             if path is None:
                 break
 
+            text_chunks = []
             with fitz.open(path) as doc:
-                text = "".join(page.get_text() for page in doc)
-            out_queue.put(("SUCCESS", text))
+                for page in doc:
+                    text_chunks.append(page.get_text())
+
+            text = "".join(text_chunks)
+            del text_chunks
+
+            conn.send(("SUCCESS", text))
+            del text
+            gc.collect()
         except Exception as e:
-            out_queue.put(("ERROR", str(e)))
+            try:
+                conn.send(("ERROR", str(e)))
+            except Exception:
+                pass
 
 
 class SafePDFExtractor:
     def __init__(self):
         self.ctx = multiprocessing.get_context("spawn")
         self.in_queue = self.ctx.Queue()
-        self.out_queue = self.ctx.Queue()
+        self.parent_conn, self.child_conn = self.ctx.Pipe(duplex=False)
         self.worker = None
         self._start_worker()
 
     def _start_worker(self):
         self.worker = self.ctx.Process(
-            target=_pdf_worker_loop, args=(self.in_queue, self.out_queue)
+            target=_pdf_worker_loop, args=(self.in_queue, self.child_conn)
         )
         self.worker.daemon = True
         self.worker.start()
@@ -87,27 +100,36 @@ class SafePDFExtractor:
                 self.in_queue.get_nowait()
             except queue.Empty:
                 break
-        while not self.out_queue.empty():
+
+        while self.parent_conn.poll():
             try:
-                self.out_queue.get_nowait()
-            except queue.Empty:
+                self.parent_conn.recv()
+            except EOFError:
                 break
 
         self.in_queue.put(path)
 
-        try:
-            status, result = self.out_queue.get(timeout=FILE_TIMEOUT_SECONDS)
-            if status == "ERROR":
-                raise RuntimeError(result)
-            return result
-        except queue.Empty:
-            print(
-                f"\n🚨 {path.name} timed out (> {FILE_TIMEOUT_SECONDS}s). Forcefully restarting worker..."
-            )
-            self.worker.terminate()
-            self.worker.join()
-            self._start_worker()
-            raise TimeoutError(f"PDF extraction hung on {path.name} and was skipped.")
+        if self.parent_conn.poll(FILE_TIMEOUT_SECONDS):
+            try:
+                status, result = self.parent_conn.recv()
+                if status == "ERROR":
+                    raise RuntimeError(result)
+                return result
+            except EOFError:
+                pass
+
+        print(
+            f"\n🚨 {path.name} timed out (> {FILE_TIMEOUT_SECONDS}s). Force-restarting worker process..."
+        )
+        self.worker.terminate()
+        self.worker.join()
+
+        self.parent_conn.close()
+        self.child_conn.close()
+        self.parent_conn, self.child_conn = self.ctx.Pipe(duplex=False)
+
+        self._start_worker()
+        raise TimeoutError(f"PDF extraction hung on {path.name} and was skipped.")
 
     def close(self):
         if self.worker and self.worker.is_alive():
@@ -118,6 +140,8 @@ class SafePDFExtractor:
                 pass
             if self.worker.is_alive():
                 self.worker.terminate()
+        self.parent_conn.close()
+        self.child_conn.close()
 
 
 def read_text_file(path: Path) -> str:
