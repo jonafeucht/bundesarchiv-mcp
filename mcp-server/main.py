@@ -27,7 +27,7 @@ DB_URI = os.environ.get("DB_URI", "./lancedb_index")
 TABLE_NAME = "document_chunks"
 
 TOP_K = int(os.environ.get("TOP_K", "5"))
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "jina-embeddings-v5-text-nano")
 
 MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "6000"))
 MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "24000"))
@@ -116,7 +116,10 @@ class VectorStore:
         if self._table is None:
             return []
 
-        query_vec = self._model.encode(query, normalize_embeddings=True).tolist()
+        loop = asyncio.get_running_loop()
+        query_vec = await loop.run_in_executor(
+            None, lambda: self._model.encode(query, normalize_embeddings=True).tolist()
+        )
         qb = self._table.search(query_vec).limit(offset + top_k)
 
         if filename_filter:
