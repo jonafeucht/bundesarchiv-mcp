@@ -35,7 +35,7 @@ MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "24000"))
 
 class VectorStore:
     def __init__(self, embed_model: str, db_uri: str) -> None:
-        self._model = SentenceTransformer(embed_model)
+        self._model = SentenceTransformer(embed_model, trust_remote_code=True)
         self._db_uri = db_uri
         self._db = None
         self._table = None
