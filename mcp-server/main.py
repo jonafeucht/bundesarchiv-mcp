@@ -27,7 +27,9 @@ DB_URI = os.environ.get("DB_URI", "./lancedb_index")
 TABLE_NAME = "document_chunks"
 
 TOP_K = int(os.environ.get("TOP_K", "5"))
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "jinaai/jina-embeddings-v5-text-nano")
+EMBED_MODEL = os.environ.get(
+    "EMBED_MODEL", "ibm-granite/granite-embedding-97m-multilingual-r2"
+)
 
 MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "6000"))
 MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "24000"))
@@ -37,7 +39,7 @@ class VectorStore:
     def __init__(self, embed_model: str, db_uri: str) -> None:
         self._model = SentenceTransformer(
             embed_model,
-            trust_remote_code=True,
+            backend="onnx",
             model_kwargs={"default_task": "retrieval"},
         )
         self._db_uri = db_uri

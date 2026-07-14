@@ -12,7 +12,7 @@ DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
 
 TABLE_NAME = "document_chunks"
-EMBED_MODEL = "jinaai/jina-embeddings-v5-text-small"
+EMBED_MODEL = "ibm-granite/granite-embedding-97m-multilingual-r2"
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -52,7 +52,6 @@ def main():
 
     model = SentenceTransformer(
         EMBED_MODEL,
-        trust_remote_code=True,
         backend="onnx",
         model_kwargs={"default_task": "retrieval"},
     )
