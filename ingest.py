@@ -11,7 +11,7 @@ DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
 
 TABLE_NAME = "document_chunks"
-EMBED_MODEL = "jina-embeddings-v5-text-nano"
+EMBED_MODEL = "jinaai/jina-embeddings-v5-text-nano"
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
