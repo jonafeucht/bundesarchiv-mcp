@@ -18,24 +18,28 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 EMBED_BATCH_SIZE = 64
+DB_FLUSH_ROWS = 2000
+HASH_READ_CHUNK = 1024 * 1024
 
 
 def hash_file(path: Path) -> str:
     h = hashlib.sha256()
-    h.update(path.read_bytes())
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(HASH_READ_CHUNK), b""):
+            h.update(block)
     return h.hexdigest()
 
 
 def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()
+    if not words:
+        return []
     stride = size - overlap
     chunks = []
-
     i = 0
     while i < len(words):
         chunks.append(" ".join(words[i : i + size]))
         i += stride
-
     return chunks
 
 
@@ -44,16 +48,48 @@ def extract_text_from_pdf(path: Path) -> str:
         return "".join(page.get_text() for page in doc)
 
 
+def flush_to_db(db, table, rows):
+    if not rows:
+        return table
+
+    texts = [r["text"] for r in rows]
+    embeddings = MODEL.encode(
+        texts,
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+        batch_size=EMBED_BATCH_SIZE,
+        show_progress_bar=False,
+    ).astype("float32")
+
+    for row, emb in zip(rows, embeddings):
+        row["vector"] = emb.tolist()
+
+    df = pd.DataFrame(rows)
+
+    if table is None:
+        table = db.create_table(TABLE_NAME, data=df)
+    else:
+        try:
+            table.add(df)
+        except ValueError as e:
+            if "Cast error" in str(e) or "Cannot cast" in str(e):
+                print("\n⚠️ Schema mismatch. Dropping and re-creating table...")
+                db.drop_table(TABLE_NAME)
+                table = db.create_table(TABLE_NAME, data=df)
+            else:
+                raise
+
+    return table
+
+
 def main():
+    global MODEL
+
     print("🔍 Scanning files in", DATA_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("📥 Loading embedding model with ONNX optimization...")
-
-    model = SentenceTransformer(
-        EMBED_MODEL,
-        backend="onnx",
-    )
+    MODEL = SentenceTransformer(EMBED_MODEL, backend="onnx")
 
     db = lancedb.connect(OUTPUT_DIR)
 
@@ -70,16 +106,17 @@ def main():
         existing_hashes = set()
 
     print("📋 Discovering files...")
-    files_to_process = []
-    for file_path in DATA_DIR.rglob("*"):
-        if not file_path.is_file():
-            continue
-        if file_path.suffix.lower() not in [".pdf", ".txt", ".md"]:
-            continue
+    candidate_paths = [
+        p
+        for p in DATA_DIR.rglob("*")
+        if p.is_file() and p.suffix.lower() in [".pdf", ".txt", ".md"]
+    ]
 
+    files_to_process = []
+    for file_path in tqdm(candidate_paths, desc="Hashing files", unit="file"):
         file_hash = hash_file(file_path)
         if file_hash not in existing_hashes:
-            files_to_process.append(file_path)
+            files_to_process.append((file_path, file_hash))
 
     if not files_to_process:
         print("✅ No new or changed files found.")
@@ -87,9 +124,14 @@ def main():
 
     print(f"📄 Found {len(files_to_process)} new/changed file(s) to process.")
 
-    for file_path in tqdm(files_to_process, desc="Processing Files", unit="file"):
+    pending_rows = []
+    processed = 0
+    skipped = 0
+
+    for file_path, file_hash in tqdm(
+        files_to_process, desc="Processing Files", unit="file"
+    ):
         relative_name = str(file_path.relative_to(DATA_DIR))
-        file_hash = hash_file(file_path)
 
         try:
             if file_path.suffix.lower() == ".pdf":
@@ -98,15 +140,15 @@ def main():
                 text = file_path.read_text(encoding="utf-8")
         except Exception as e:
             print(f"⚠️ Error reading {relative_name}: {e}. Skipping.")
+            skipped += 1
             continue
 
         chunks = chunk_text(text)
         if not chunks:
             continue
 
-        file_chunks = []
         for i, chunk in enumerate(chunks):
-            file_chunks.append(
+            pending_rows.append(
                 {
                     "filename": relative_name,
                     "file_hash": file_hash,
@@ -115,34 +157,17 @@ def main():
                 }
             )
 
-        batch_texts = [c["text"] for c in file_chunks]
-        embeddings = model.encode(
-            batch_texts,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-            batch_size=EMBED_BATCH_SIZE,
-            show_progress_bar=False,
-        ).astype("float32")
+        processed += 1
 
-        for j, emb in enumerate(embeddings):
-            file_chunks[j]["vector"] = emb.tolist()
+        if len(pending_rows) >= DB_FLUSH_ROWS:
+            table = flush_to_db(db, table, pending_rows)
+            pending_rows = []
 
-        df = pd.DataFrame(file_chunks)
+    table = flush_to_db(db, table, pending_rows)
 
-        if table is None:
-            table = db.create_table(TABLE_NAME, data=df)
-        else:
-            try:
-                table.add(df)
-            except ValueError as e:
-                if "Cast error" in str(e) or "Cannot cast" in str(e):
-                    print(f"\n⚠️ Schema mismatch. Dropping and re-creating table...")
-                    db.drop_table(TABLE_NAME)
-                    table = db.create_table(TABLE_NAME, data=df)
-                else:
-                    raise e
-
-    print("🎉 Done! Index updated successfully.")
+    print(
+        f"🎉 Done! Index updated successfully. Processed {processed} file(s), skipped {skipped}."
+    )
 
 
 if __name__ == "__main__":
