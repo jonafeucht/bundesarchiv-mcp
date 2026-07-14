@@ -54,3 +54,7 @@
 - [CIA: DEMOCRATIC REPUBLIC OF VIETNAM ORDER OF BATTLE IN SOUTH VIETNAM](https://www.cia.gov/readingroom/document/cia-rdp80-00810a002400500008-2)
 - [Truman State University: Vietnam Documents](https://library.truman.edu/microform-collection/vietnam-documents/)
 - [Vietnamese Ambassador disrupted from speaking at New York University (1968-12-05)](https://commons.wikimedia.org/wiki/File:Vietnamese_Ambassador_disrupted_from_speaking_at_New_York_University_(1968-12-05).pdf)
+
+
+## WW2 Germany
+- [Operation Gomorrah](https://www.airandspaceforces.com/PDF/MagazineArchive/Documents/2007/March%202007/0307gomorrah.pdf)

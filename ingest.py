@@ -22,7 +22,7 @@ CHUNK_OVERLAP = 50
 EMBED_BATCH_SIZE = 16
 DB_FLUSH_ROWS = 500
 HASH_READ_CHUNK = 1024 * 1024
-FILE_TIMEOUT_SECONDS = 30
+FILE_TIMEOUT_SECONDS = 15
 MAX_TEXT_SIZE_BYTES = 50 * 1024 * 1024
 
 
@@ -160,8 +160,10 @@ def main():
     processed = 0
     skipped = 0
 
+    ctx = multiprocessing.get_context("spawn")
+
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=min(4, multiprocessing.cpu_count())
+        max_workers=min(4, multiprocessing.cpu_count()), mp_context=ctx
     ) as executor:
         for file_path, file_hash in tqdm(
             files_to_process, desc="Processing Files", unit="file"
