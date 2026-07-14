@@ -53,7 +53,6 @@ def main():
     model = SentenceTransformer(
         EMBED_MODEL,
         backend="onnx",
-        model_kwargs={"default_task": "retrieval"},
     )
 
     db = lancedb.connect(OUTPUT_DIR)

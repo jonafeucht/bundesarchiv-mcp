@@ -40,7 +40,6 @@ class VectorStore:
         self._model = SentenceTransformer(
             embed_model,
             backend="onnx",
-            model_kwargs={"default_task": "retrieval"},
         )
         self._db_uri = db_uri
         self._db = None
