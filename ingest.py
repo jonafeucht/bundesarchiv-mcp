@@ -45,7 +45,9 @@ def main():
     print("Scanning files...")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    model = SentenceTransformer(EMBED_MODEL, trust_remote_code=True)
+    model = SentenceTransformer(
+        EMBED_MODEL, trust_remote_code=True, model_kwargs={"default_task": "retrieval"}
+    )
 
     db = lancedb.connect(OUTPUT_DIR)
 

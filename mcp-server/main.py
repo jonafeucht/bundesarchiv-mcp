@@ -35,7 +35,11 @@ MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "24000"))
 
 class VectorStore:
     def __init__(self, embed_model: str, db_uri: str) -> None:
-        self._model = SentenceTransformer(embed_model, trust_remote_code=True)
+        self._model = SentenceTransformer(
+            embed_model,
+            trust_remote_code=True,
+            model_kwargs={"default_task": "retrieval"},
+        )
         self._db_uri = db_uri
         self._db = None
         self._table = None
@@ -106,7 +110,7 @@ class VectorStore:
     def total_files_count(self) -> int:
         return len(self._cached_filenames)
 
-    def search(
+    async def search(
         self,
         query: str,
         top_k: int = TOP_K,
@@ -247,7 +251,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             offset = max(int(arguments.get("offset", 0)), 0)
             filename_filter = arguments.get("filename")
 
-            results = _store.search(
+            results = await _store.search(
                 query,
                 top_k=top_k,
                 offset=offset,
