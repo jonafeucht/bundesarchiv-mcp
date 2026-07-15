@@ -14,7 +14,7 @@ CHUNK_OVERLAP=100
 TOP_K=10
 MAX_CHARS_PER_CHUNK=6000
 MAX_CONTEXT_TOKENS=24000
-EMBED_MODEL=ibm-granite/granite-embedding-97m-multilingual-r2
+EMBED_MODEL=intfloat/multilingual-e5-small
 ```
 
 ## Deploy
