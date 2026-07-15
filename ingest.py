@@ -16,7 +16,7 @@ DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
 
 TABLE_NAME = "document_chunks"
-EMBED_MODEL = "all-MiniLM-L6-v2"
+EMBED_MODEL = "intfloat/multilingual-e5-small"
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
