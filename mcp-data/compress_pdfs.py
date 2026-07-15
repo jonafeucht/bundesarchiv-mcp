@@ -14,11 +14,9 @@ except ImportError:
 MANIFEST_FILE = ".compressed_manifest.txt"
 
 # === SAFETY FILTERS ===
-MAX_FILE_SIZE_MB = 150  # Skip files larger than 150MB to prevent memory exhaustion
-MAX_PAGES = 500  # Skip files with more than 500 pages (high processing time)
-MAX_VECTOR_PATHS_PER_PAGE = (
-    5000  # Skip CAD drawings/blueprints with massive vector lines
-)
+MAX_FILE_SIZE_MB = 100  # Skip files larger than 150MB
+MAX_PAGES = 500  # Skip files with more than 500 pages
+MAX_VECTOR_PATHS_PER_PAGE = 5000  # Skip heavy CAD drawings
 
 
 def load_manifest():
@@ -69,6 +67,9 @@ def is_high_risk_file(file_path):
 def compress_single_pdf(file_path, max_dim=1500, jpeg_quality=35):
     if not HAS_PYMUPDF:
         return 0, 0, "No PyMuPDF"
+
+    filename = os.path.basename(file_path)
+    print(f"⏳ Starting: {filename}", flush=True)
 
     is_risk, reason = is_high_risk_file(file_path)
     if is_risk:
@@ -137,9 +138,7 @@ def batch_compress_directory(root_folder):
 
     skipped_count = len(raw_pdf_files) - len(pdf_files)
     if skipped_count > 0:
-        print(
-            f"♻️  Found {skipped_count} already handled files. Resuming and skipping them!"
-        )
+        print(f"♻️  Found {skipped_count} already handled files. Skipping them!")
 
     file_count = len(pdf_files)
     if file_count == 0:
@@ -152,7 +151,7 @@ def batch_compress_directory(root_folder):
     start_time = time.time()
 
     num_processes = max(1, cpu_count() - 1)
-    print(f"🚀 Starting parallel execution across {num_processes} CPU cores...")
+    print(f"🚀 Starting parallel execution across {num_processes} CPU cores...\n")
 
     with Pool(processes=num_processes) as pool:
         iterator = pool.imap_unordered(_worker, pdf_files)
@@ -165,14 +164,18 @@ def batch_compress_directory(root_folder):
                 filename = os.path.basename(full_path)
 
                 if "SKIPPED" in status or "FAILED" in status:
-                    print(f"[{completed}/{file_count}] ⚠️  {filename} -> {status}")
+                    print(
+                        f"  ↳ [{completed}/{file_count}] ⚠️  {filename} -> {status}\n",
+                        flush=True,
+                    )
                     skipped_files += 1
                 else:
                     total_orig_size += orig
                     total_new_size += new
                     pct = ((orig - new) / orig * 100) if orig > 0 else 0
                     print(
-                        f"[{completed}/{file_count}] ✓ {filename} : Reduced by {pct:.1f}%"
+                        f"  ↳ [{completed}/{file_count}] ✓ {filename} : Reduced by {pct:.1f}%\n",
+                        flush=True,
                     )
 
                 mark_as_processed(full_path)
@@ -180,10 +183,12 @@ def batch_compress_directory(root_folder):
             except StopIteration:
                 break
             except Exception as e:
-                print(f"\n⚠️  A process worker hung or crashed: {e}. Moving forward...")
+                print(
+                    f"\n⚠️  A process worker hung or crashed: {e}. Moving forward...\n",
+                    flush=True,
+                )
                 continue
 
-    # 4. Process Summary
     orig_mb = total_orig_size / (1024 * 1024)
     new_mb = total_new_size / (1024 * 1024)
     saved_mb = orig_mb - new_mb
