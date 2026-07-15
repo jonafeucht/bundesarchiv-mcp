@@ -2,8 +2,7 @@ import gc
 import hashlib
 import os
 import multiprocessing
-import queue
-import time
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as ConnTimeoutError
 from pathlib import Path
 
 import fitz
@@ -54,102 +53,36 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
-def _pdf_worker_loop(in_queue: multiprocessing.Queue, conn):
-    while True:
-        try:
-            path = in_queue.get()
-            if path is None:
-                break
-
+def extract_and_chunk_single_file(file_info):
+    file_path, file_hash, relative_name = file_info
+    try:
+        if file_path.suffix.lower() == ".pdf":
             text_chunks = []
-            with fitz.open(path) as doc:
+            with fitz.open(file_path) as doc:
                 for page in doc:
                     text_chunks.append(page.get_text())
-
             text = "".join(text_chunks)
-            del text_chunks
+        else:
+            if file_path.stat().st_size > MAX_TEXT_SIZE_BYTES:
+                raise ValueError(
+                    f"File exceeds limit: {MAX_TEXT_SIZE_BYTES / 1024 / 1024} MB"
+                )
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
 
-            conn.send(("SUCCESS", text))
-            del text
-            gc.collect()
-        except Exception as e:
-            try:
-                conn.send(("ERROR", str(e)))
-            except Exception:
-                pass
+        chunks = chunk_text(text)
+        payloads = [
+            {
+                "filename": relative_name,
+                "file_hash": file_hash,
+                "chunk": i,
+                "text": chunk,
+            }
+            for i, chunk in enumerate(chunks)
+        ]
 
-
-class SafePDFExtractor:
-    def __init__(self):
-        self.ctx = multiprocessing.get_context("spawn")
-        self.in_queue = self.ctx.Queue()
-        self.parent_conn, self.child_conn = self.ctx.Pipe(duplex=False)
-        self.worker = None
-        self._start_worker()
-
-    def _start_worker(self):
-        self.worker = self.ctx.Process(
-            target=_pdf_worker_loop, args=(self.in_queue, self.child_conn)
-        )
-        self.worker.daemon = True
-        self.worker.start()
-
-    def extract(self, path: Path) -> str:
-        while not self.in_queue.empty():
-            try:
-                self.in_queue.get_nowait()
-            except queue.Empty:
-                break
-
-        while self.parent_conn.poll():
-            try:
-                self.parent_conn.recv()
-            except EOFError:
-                break
-
-        self.in_queue.put(path)
-
-        if self.parent_conn.poll(FILE_TIMEOUT_SECONDS):
-            try:
-                status, result = self.parent_conn.recv()
-                if status == "ERROR":
-                    raise RuntimeError(result)
-                return result
-            except EOFError:
-                pass
-
-        print(
-            f"\n🚨 {path.name} timed out (> {FILE_TIMEOUT_SECONDS}s). Force-restarting worker process..."
-        )
-        self.worker.terminate()
-        self.worker.join()
-
-        self.parent_conn.close()
-        self.child_conn.close()
-        self.parent_conn, self.child_conn = self.ctx.Pipe(duplex=False)
-
-        self._start_worker()
-        raise TimeoutError(f"PDF extraction hung on {path.name} and was skipped.")
-
-    def close(self):
-        if self.worker and self.worker.is_alive():
-            try:
-                self.in_queue.put(None)
-                self.worker.join(timeout=2)
-            except Exception:
-                pass
-            if self.worker.is_alive():
-                self.worker.terminate()
-        self.parent_conn.close()
-        self.child_conn.close()
-
-
-def read_text_file(path: Path) -> str:
-    if path.stat().st_size > MAX_TEXT_SIZE_BYTES:
-        raise ValueError(
-            f"File size exceeds 50MB limit ({path.stat().st_size / 1024 / 1024:.2f} MB)"
-        )
-    return path.read_text(encoding="utf-8", errors="ignore")
+        return "SUCCESS", relative_name, payloads
+    except Exception as e:
+        return "ERROR", relative_name, str(e)
 
 
 def flush_to_db(db, table, rows):
@@ -157,6 +90,7 @@ def flush_to_db(db, table, rows):
         return table
 
     texts = [r["text"] for r in rows]
+
     embeddings = MODEL.encode(
         texts,
         normalize_embeddings=True,
@@ -228,52 +162,58 @@ def main():
 
     print(f"📄 Found {len(files_to_process)} new/changed file(s) to process.")
 
+    tasks = []
+    for file_path, file_hash in files_to_process:
+        relative_name = str(file_path.relative_to(DATA_DIR))
+        tasks.append((file_path, file_hash, relative_name))
+
     pending_rows = []
     processed = 0
     skipped = 0
 
-    extractor = SafePDFExtractor()
+    max_workers = max(1, multiprocessing.cpu_count() - 1)
+    print(f"⚡ Starting parallel parser using {max_workers} worker processes...")
 
-    try:
-        for file_path, file_hash in tqdm(
-            files_to_process, desc="Processing Files", unit="file"
-        ):
-            relative_name = str(file_path.relative_to(DATA_DIR))
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_filename = {
+            executor.submit(extract_and_chunk_single_file, t): t[2] for t in tasks
+        }
 
+        progress_bar = tqdm(
+            total=len(future_to_filename), desc="Processing Files", unit="file"
+        )
+
+        for future in list(future_to_filename.keys()):
+            file_name = future_to_filename[future]
             try:
-                if file_path.suffix.lower() == ".pdf":
-                    text = extractor.extract(file_path)
+                status, _, result = future.result(timeout=FILE_TIMEOUT_SECONDS)
+
+                if status == "SUCCESS":
+                    progress_bar.write(f"⚙️ Processed: {file_name}")
+                    pending_rows.extend(result)
+                    processed += 1
                 else:
-                    text = read_text_file(file_path)
-            except Exception as e:
-                print(f"\n⚠️ Skipped: {relative_name} | Reason: {e}")
-                skipped += 1
-                continue
-
-            chunks = chunk_text(text)
-            if not chunks:
-                continue
-
-            for i, chunk in enumerate(chunks):
-                pending_rows.append(
-                    {
-                        "filename": relative_name,
-                        "file_hash": file_hash,
-                        "chunk": i,
-                        "text": chunk,
-                    }
+                    progress_bar.write(f"⚠️ Skipped: {file_name} | Reason: {result}")
+                    skipped += 1
+            except ConnTimeoutError:
+                progress_bar.write(
+                    f"🚨 Timeout: {file_name} took longer than {FILE_TIMEOUT_SECONDS}s and was skipped."
                 )
-
-            processed += 1
+                future.cancel()
+                skipped += 1
+            except Exception as e:
+                progress_bar.write(f"💥 Failed: {file_name} | Error: {e}")
+                skipped += 1
+            finally:
+                progress_bar.update(1)
 
             if len(pending_rows) >= DB_FLUSH_ROWS:
-                table = flush_to_db(db, table, pending_rows)
-                pending_rows = []
+                to_flush = pending_rows[:DB_FLUSH_ROWS]
+                table = flush_to_db(db, table, to_flush)
+                pending_rows = pending_rows[DB_FLUSH_ROWS:]
 
-        table = flush_to_db(db, table, pending_rows)
-
-    finally:
-        extractor.close()
+        if pending_rows:
+            table = flush_to_db(db, table, pending_rows)
 
     print(
         f"🎉 Done! Index updated successfully. Processed {processed} file(s), skipped {skipped}."
