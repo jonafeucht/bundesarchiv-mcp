@@ -27,9 +27,7 @@ DB_URI = os.environ.get("DB_URI", "./lancedb_index")
 TABLE_NAME = "document_chunks"
 
 TOP_K = int(os.environ.get("TOP_K", "5"))
-EMBED_MODEL = os.environ.get(
-    "EMBED_MODEL", "ibm-granite/granite-embedding-97m-multilingual-r2"
-)
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2", backend="onnx")
 
 MAX_CHARS_PER_CHUNK = int(os.getenv("MAX_CHARS_PER_CHUNK", "6000"))
 MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "24000"))
@@ -66,7 +64,6 @@ class VectorStore:
             return False
 
     def _refresh_caches(self):
-        """Pre-aggregates distinct files and isolates unique parent folders."""
         try:
             df = (
                 self._table.search()
@@ -94,7 +91,6 @@ class VectorStore:
             self._cached_foldernames = []
 
     def get_topics_string(self) -> str:
-        """Returns all distinct isolated foldernames for the LLM system prompt context."""
         if not self._cached_foldernames:
             return "historical documents, federal files, or archive topics"
         return ", ".join(self._cached_foldernames)
