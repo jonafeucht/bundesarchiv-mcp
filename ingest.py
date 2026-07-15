@@ -5,7 +5,12 @@ from pathlib import Path
 import fitz
 import lancedb
 import pandas as pd
+import pyarrow as pa
 from sentence_transformers import SentenceTransformer
+import torch
+
+torch.set_num_threads(2)
+torch.set_num_interop_threads(2)
 
 DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
@@ -19,7 +24,9 @@ CHUNK_OVERLAP = 50
 
 def hash_file(path: Path) -> str:
     h = hashlib.sha256()
-    h.update(path.read_bytes())
+    with path.open("rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
     return h.hexdigest()
 
 
@@ -45,22 +52,22 @@ def main():
     print("Scanning files...")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    model = SentenceTransformer(EMBED_MODEL, backend="onnx")
-
+    model = SentenceTransformer(EMBED_MODEL)
     db = lancedb.connect(OUTPUT_DIR)
+
+    existing_hashes = set()
+    table = None
 
     if TABLE_NAME in db.table_names():
         table = db.open_table(TABLE_NAME)
-        existing = table.to_pandas()
-
-        existing_hashes = (
-            set(existing["file_hash"].unique())
-            if "file_hash" in existing.columns
-            else set()
+        existing_hashes = set(
+            table.search()
+            .select(["file_hash"])
+            .limit(10_000_000)
+            .to_arrow()
+            .column("file_hash")
+            .to_pylist()
         )
-    else:
-        table = None
-        existing_hashes = set()
 
     new_chunks = []
 
@@ -100,28 +107,30 @@ def main():
         return
 
     print(f"Embedding {len(new_chunks)} chunks...")
-
     texts = [c["text"] for c in new_chunks]
 
     embeddings = model.encode(
         texts,
         normalize_embeddings=True,
-        convert_to_numpy=True,
-        batch_size=64,
+        convert_to_numpy=False,
+        batch_size=32,
         show_progress_bar=True,
-    ).astype("float32")
+    )
 
-    for i, emb in enumerate(embeddings):
-        new_chunks[i]["vector"] = emb.tolist()
+    embeddings_list = [emb.tolist() for emb in embeddings]
+
+    for i, emb in enumerate(embeddings_list):
+        new_chunks[i]["vector"] = emb
 
     df = pd.DataFrame(new_chunks)
+    arrow_table = pa.Table.from_pandas(df)
 
     if table is None:
         print("Creating table...")
-        db.create_table(TABLE_NAME, data=df)
+        db.create_table(TABLE_NAME, data=arrow_table)
     else:
         print("Appending to existing table...")
-        table.add(df)
+        table.add(arrow_table)
 
     print(f"✔ Done. Added {len(new_chunks)} new chunks.")
 

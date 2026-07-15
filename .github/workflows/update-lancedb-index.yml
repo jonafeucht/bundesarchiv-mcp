@@ -65,7 +65,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install lancedb==0.34.0 pandas sentence-transformers[onnx] pymupdf numpy python-dotenv mcp starlette uvicorn pylance==8.0.0
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir lancedb==0.34.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
 
       - name: Generate/Update LanceDB Index
         env:
