@@ -2,8 +2,9 @@ import gc
 import hashlib
 import os
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, TimeoutError as ConnTimeoutError
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+import time
 
 import fitz
 import lancedb
@@ -11,7 +12,6 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
-# --- Configuration ---
 DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
 
@@ -36,7 +36,6 @@ def hash_file(path: Path) -> str:
                 h.update(block)
         return h.hexdigest()
     except Exception as e:
-        print(f"\n⚠️ Error hashing {path.name}: {e}")
         return ""
 
 
@@ -53,12 +52,17 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
-def extract_and_chunk_single_file(file_info):
-    file_path, file_hash, relative_name = file_info
+def extract_hash_and_chunk(file_path: Path, relative_name: str):
     try:
+        file_hash = hash_file(file_path)
+        if not file_hash:
+            return "SKIP", relative_name, "Hashing failed"
+
         if file_path.suffix.lower() == ".pdf":
             text_chunks = []
             with fitz.open(file_path) as doc:
+                if len(doc) > 500:
+                    raise ValueError(f"PDF exceeds 500 pages: {len(doc)} pages")
                 for page in doc:
                     text_chunks.append(page.get_text())
             text = "".join(text_chunks)
@@ -80,18 +84,17 @@ def extract_and_chunk_single_file(file_info):
             for i, chunk in enumerate(chunks)
         ]
 
-        return "SUCCESS", relative_name, payloads
+        return "SUCCESS", relative_name, (file_hash, payloads)
     except Exception as e:
         return "ERROR", relative_name, str(e)
 
 
-def flush_to_db(db, table, rows):
+def flush_to_db(db, table, rows, model):
     if not rows:
         return table
 
     texts = [r["text"] for r in rows]
-
-    embeddings = MODEL.encode(
+    embeddings = model.encode(
         texts,
         normalize_embeddings=True,
         convert_to_numpy=True,
@@ -111,7 +114,6 @@ def flush_to_db(db, table, rows):
             table.add(df)
         except ValueError as e:
             if "Cast error" in str(e) or "Cannot cast" in str(e):
-                print("\n⚠️ Schema mismatch. Dropping and re-creating table...")
                 db.drop_table(TABLE_NAME)
                 table = db.create_table(TABLE_NAME, data=df)
             else:
@@ -121,103 +123,80 @@ def flush_to_db(db, table, rows):
 
 
 def main():
-    global MODEL
+    os.environ["OMP_NUM_THREADS"] = "2"
+    os.environ["MKL_NUM_THREADS"] = "2"
 
     print("🔍 Scanning files in", DATA_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("📥 Loading embedding model with ONNX optimization...")
-    MODEL = SentenceTransformer(EMBED_MODEL, backend="onnx")
-
     db = lancedb.connect(OUTPUT_DIR)
+    existing_hashes = set()
 
     if TABLE_NAME in db.table_names():
         table = db.open_table(TABLE_NAME)
-        existing = table.to_pandas()
-        existing_hashes = (
-            set(existing["file_hash"].unique())
-            if "file_hash" in existing.columns
-            else set()
+        existing_hashes = set(
+            table.search().select(["file_hash"]).to_pandas()["file_hash"].unique()
         )
     else:
         table = None
-        existing_hashes = set()
 
-    print("📋 Discovering files...")
     candidate_paths = [
         p
         for p in DATA_DIR.rglob("*")
         if p.is_file() and p.suffix.lower() in [".pdf", ".txt", ".md"]
     ]
 
-    files_to_process = []
-    for file_path in tqdm(candidate_paths, desc="Hashing files", unit="file"):
-        file_hash = hash_file(file_path)
-        if file_hash and file_hash not in existing_hashes:
-            files_to_process.append((file_path, file_hash))
+    print(f"📋 Found {len(candidate_paths)} candidate files. Initializing workers...")
 
-    if not files_to_process:
-        print("✅ No new or changed files found.")
-        return
-
-    print(f"📄 Found {len(files_to_process)} new/changed file(s) to process.")
-
-    tasks = []
-    for file_path, file_hash in files_to_process:
-        relative_name = str(file_path.relative_to(DATA_DIR))
-        tasks.append((file_path, file_hash, relative_name))
+    print("📥 Loading embedding model...")
+    model = SentenceTransformer(EMBED_MODEL, backend="onnx")
 
     pending_rows = []
     processed = 0
     skipped = 0
 
-    max_workers = max(1, multiprocessing.cpu_count() - 1)
-    print(f"⚡ Starting parallel parser using {max_workers} worker processes...")
+    max_workers = max(1, multiprocessing.cpu_count() - 2)
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_filename = {
-            executor.submit(extract_and_chunk_single_file, t): t[2] for t in tasks
-        }
+        future_to_file = {}
+        for p in candidate_paths:
+            rel_name = str(p.relative_to(DATA_DIR))
+            future = executor.submit(extract_hash_and_chunk, p, rel_name)
+            future_to_file[future] = rel_name
 
         progress_bar = tqdm(
-            total=len(future_to_filename), desc="Processing Files", unit="file"
+            total=len(future_to_file), desc="Processing Files", unit="file"
         )
 
-        for future in list(future_to_filename.keys()):
-            file_name = future_to_filename[future]
+        for future in as_completed(future_to_file.keys()):
+            file_name = future_to_file[future]
             try:
                 status, _, result = future.result(timeout=FILE_TIMEOUT_SECONDS)
 
                 if status == "SUCCESS":
-                    progress_bar.write(f"⚙️ Processed: {file_name}")
-                    pending_rows.extend(result)
-                    processed += 1
+                    file_hash, payloads = result
+                    if file_hash in existing_hashes:
+                        skipped += 1
+                    else:
+                        pending_rows.extend(payloads)
+                        processed += 1
                 else:
-                    progress_bar.write(f"⚠️ Skipped: {file_name} | Reason: {result}")
                     skipped += 1
-            except ConnTimeoutError:
-                progress_bar.write(
-                    f"🚨 Timeout: {file_name} took longer than {FILE_TIMEOUT_SECONDS}s and was skipped."
-                )
-                future.cancel()
-                skipped += 1
+
             except Exception as e:
-                progress_bar.write(f"💥 Failed: {file_name} | Error: {e}")
                 skipped += 1
             finally:
                 progress_bar.update(1)
 
             if len(pending_rows) >= DB_FLUSH_ROWS:
                 to_flush = pending_rows[:DB_FLUSH_ROWS]
-                table = flush_to_db(db, table, to_flush)
+                table = flush_to_db(db, table, to_flush, model)
                 pending_rows = pending_rows[DB_FLUSH_ROWS:]
 
         if pending_rows:
-            table = flush_to_db(db, table, pending_rows)
+            table = flush_to_db(db, table, pending_rows, model)
 
-    print(
-        f"🎉 Done! Index updated successfully. Processed {processed} file(s), skipped {skipped}."
-    )
+    print(f"🎉 Done! Processed {processed} file(s), skipped/unchanged {skipped}.")
 
 
 if __name__ == "__main__":
