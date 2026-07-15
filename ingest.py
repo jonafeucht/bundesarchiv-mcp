@@ -7,10 +7,6 @@ import lancedb
 import pandas as pd
 import pyarrow as pa
 from sentence_transformers import SentenceTransformer
-import torch
-
-torch.set_num_threads(2)
-torch.set_num_interop_threads(2)
 
 DATA_DIR = Path(os.getenv("PDF_DIR", "./mcp-data")).resolve()
 OUTPUT_DIR = Path(os.getenv("DB_URI", "./mcp-server/lancedb_index")).resolve()
