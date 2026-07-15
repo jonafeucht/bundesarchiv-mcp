@@ -25,7 +25,8 @@ EMBED_BATCH_SIZE = 16
 DB_FLUSH_ROWS = 500
 HASH_READ_CHUNK = 1024 * 1024
 FILE_TIMEOUT_SECONDS = 20
-MAX_TEXT_SIZE_BYTES = 50 * 1024 * 1024
+MAX_TEXT_SIZE_BYTES = 10 * 1024 * 1024
+MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024
 
 
 def hash_file(path: Path) -> str:
@@ -54,24 +55,25 @@ def chunk_text(text: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
 
 def extract_hash_and_chunk(file_path: Path, relative_name: str):
     try:
-        file_hash = hash_file(file_path)
-        if not file_hash:
-            return "SKIP", relative_name, "Hashing failed"
-
         if file_path.suffix.lower() == ".pdf":
-            text_chunks = []
+            if file_path.stat().st_size > MAX_PDF_SIZE_BYTES:
+                return "SKIP", relative_name, "File size too large"
+
             with fitz.open(file_path) as doc:
-                if len(doc) > 500:
-                    raise ValueError(f"PDF exceeds 500 pages: {len(doc)} pages")
+                if doc.page_count > 500:
+                    return "SKIP", relative_name, "Too many pages"
+                text_chunks = []
                 for page in doc:
                     text_chunks.append(page.get_text())
             text = "".join(text_chunks)
         else:
             if file_path.stat().st_size > MAX_TEXT_SIZE_BYTES:
-                raise ValueError(
-                    f"File exceeds limit: {MAX_TEXT_SIZE_BYTES / 1024 / 1024} MB"
-                )
+                return "SKIP", relative_name, "File size too large"
             text = file_path.read_text(encoding="utf-8", errors="ignore")
+
+        file_hash = hash_file(file_path)
+        if not file_hash:
+            return "SKIP", relative_name, "Hashing failed"
 
         chunks = chunk_text(text)
         payloads = [
@@ -123,8 +125,8 @@ def flush_to_db(db, table, rows, model):
 
 
 def main():
-    os.environ["OMP_NUM_THREADS"] = "2"
-    os.environ["MKL_NUM_THREADS"] = "2"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
 
     print("🔍 Scanning files in", DATA_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -140,13 +142,18 @@ def main():
     else:
         table = None
 
-    candidate_paths = [
-        p
-        for p in DATA_DIR.rglob("*")
-        if p.is_file() and p.suffix.lower() in [".pdf", ".txt", ".md"]
-    ]
+    candidate_paths = []
+    for p in DATA_DIR.rglob("*"):
+        if p.is_file() and p.suffix.lower() in [".pdf", ".txt", ".md"]:
+            if p.suffix.lower() == ".pdf" and p.stat().st_size > MAX_PDF_SIZE_BYTES:
+                continue
+            if p.suffix.lower() != ".pdf" and p.stat().st_size > MAX_TEXT_SIZE_BYTES:
+                continue
+            candidate_paths.append(p)
 
-    print(f"📋 Found {len(candidate_paths)} candidate files. Initializing workers...")
+    print(
+        f"📋 Found {len(candidate_paths)} clean candidate files. Initializing workers..."
+    )
 
     print("📥 Loading embedding model...")
     model = SentenceTransformer(EMBED_MODEL, backend="onnx")
