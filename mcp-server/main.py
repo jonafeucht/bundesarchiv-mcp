@@ -44,6 +44,7 @@ class VectorStore:
         self._table = None
         self._cached_filenames: list[str] = []
         self._cached_foldernames: list[str] = []
+        self.is_ready = False
 
     def load(self) -> bool:
         try:
@@ -57,6 +58,7 @@ class VectorStore:
 
             print(f"Ready: LanceDB connected. Table size={len(self._table)}")
             self._refresh_caches()
+            self.is_ready = True
             return True
 
         except Exception as e:
@@ -64,7 +66,6 @@ class VectorStore:
             return False
 
     def _refresh_caches(self):
-        """Refresh cached filenames using proper table scan (fixed)"""
         try:
             df = (
                 self._table.query()
@@ -98,7 +99,6 @@ class VectorStore:
         return ", ".join(self._cached_foldernames)
 
     def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
-        """Fixed pagination"""
         if not self._cached_filenames and self._table is not None:
             self._refresh_caches()
 
@@ -108,7 +108,6 @@ class VectorStore:
         return self._cached_filenames[offset : offset + per_page]
 
     def total_files_count(self) -> int:
-        """More reliable count"""
         try:
             if self._table is not None:
                 return self._table.count_rows("filename IS NOT NULL")
@@ -227,6 +226,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     def err(msg: str):
         return [types.TextContent(type="text", text=f"Error: {msg}")]
 
+    if not _store.is_ready:
+        return err("Database is currently initializing. Please try again in a moment.")
+
     try:
         if name == "list_pdfs":
             page = max(int(arguments.get("page", 1)), 1)
@@ -297,13 +299,16 @@ session_manager = StreamableHTTPSessionManager(
 )
 
 
-@asynccontextmanager
-async def lifespan(_app):
+async def init_db_background():
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(None, _store.load)
-
     if not ok:
-        raise RuntimeError("Failed to load LanceDB index")
+        print("CRITICAL: Failed to initialize LanceDB in background task.")
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    asyncio.create_task(init_db_background())
 
     async with session_manager.run():
         yield
