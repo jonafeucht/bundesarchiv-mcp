@@ -65,7 +65,12 @@ class VectorStore:
 
     def _refresh_caches(self):
         try:
-            df = self._table.to_pandas()
+            df = (
+                self._table.search()
+                .where("filename IS NOT NULL")
+                .select(["filename"])
+                .to_pandas()
+            )
 
             if "filename" not in df.columns:
                 raise RuntimeError("filename column missing from LanceDB table")
@@ -108,8 +113,8 @@ class VectorStore:
         if not self._cached_filenames and self._table is not None:
             self._refresh_caches()
 
-        page = max(page, 1)
-        per_page = max(min(per_page, 100), 1)
+        page = max(int(page), 1)
+        per_page = max(min(int(per_page), 100), 1)
 
         offset = (page - 1) * per_page
 
@@ -184,13 +189,14 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "page": {
                         "type": "integer",
-                        "description": "Page number (defaults to 1)",
+                        "description": "The page number to display (1-indexed).",
                     },
                     "per_page": {
                         "type": "integer",
-                        "description": "Number of files per page (defaults to 50, max 100)",
+                        "description": "Number of items per page (maximum 100).",
                     },
                 },
+                "required": [],
             },
         ),
         types.Tool(
