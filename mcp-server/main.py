@@ -64,9 +64,10 @@ class VectorStore:
             return False
 
     def _refresh_caches(self):
+        """Refresh cached filenames using proper table scan (fixed)"""
         try:
             df = (
-                self._table.search()
+                self._table.query()
                 .where("filename IS NOT NULL")
                 .select(["filename"])
                 .to_pandas()
@@ -82,7 +83,8 @@ class VectorStore:
 
             self._cached_foldernames = sorted(list(folders))
             print(
-                f"Cache Refreshed: {len(self._cached_filenames)} files, {len(self._cached_foldernames)} categories found."
+                f"Cache Refreshed: {len(self._cached_filenames)} files, "
+                f"{len(self._cached_foldernames)} categories found."
             )
 
         except Exception as e:
@@ -96,6 +98,7 @@ class VectorStore:
         return ", ".join(self._cached_foldernames)
 
     def list_pdfs(self, page: int = 1, per_page: int = 50) -> list[str]:
+        """Fixed pagination"""
         if not self._cached_filenames and self._table is not None:
             self._refresh_caches()
 
@@ -105,6 +108,12 @@ class VectorStore:
         return self._cached_filenames[offset : offset + per_page]
 
     def total_files_count(self) -> int:
+        """More reliable count"""
+        try:
+            if self._table is not None:
+                return self._table.count_rows("filename IS NOT NULL")
+        except:
+            pass
         return len(self._cached_filenames)
 
     async def search(
