@@ -1,0 +1,95 @@
+name: Update LanceDB Index (Indochina)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - feat-lancedb
+    paths:
+      - "indochina/**"
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Indochina Index from Latest Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p mcp-server/lancedb_index_indochina
+          
+          echo "Searching for latest lancedb_index_indochina.tar.gz asset..."
+          
+          # Try to download from the latest release first
+          if gh release download --pattern "lancedb_index_indochina.tar.gz" --dir mcp-server/ 2>/dev/null; then
+            echo "Found Indochina index in latest release."
+          else
+            echo "Indochina index not found in latest release. Searching previous releases..."
+            
+            FOUND=false
+            for TAG in $(gh release list --limit 30 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName'); do
+              echo "Checking release: $TAG"
+              if gh release download "$TAG" --pattern "lancedb_index_indochina.tar.gz" --dir mcp-server/ 2>/dev/null; then
+                echo "Found Indochina index in release $TAG."
+                FOUND=true
+                break
+              fi
+            done
+            
+            if [ "$FOUND" = "false" ]; then
+              echo "No existing Indochina index found. Starting with a fresh index."
+            fi
+          fi
+
+          # Extract if downloaded
+          if [ -f mcp-server/lancedb_index_indochina.tar.gz ]; then
+            tar -xzf mcp-server/lancedb_index_indochina.tar.gz -C mcp-server/
+            rm mcp-server/lancedb_index_indochina.tar.gz
+            echo "Extracted Indochina index."
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir lancedb==0.34.0 pandas sentence-transformers pymupdf numpy python-dotenv mcp starlette uvicorn
+
+      - name: Generate/Update LanceDB Index
+        env:
+          PDF_DIR: ${{ github.workspace }}/indochina
+          DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_indochina
+        run: python3 ingest.py
+
+      - name: Upload index to latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tar -czf lancedb_index_indochina.tar.gz -C mcp-server lancedb_index_indochina
+          
+          LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "ERROR: No release found to upload index to." >&2
+            exit 1
+          fi
+          
+          CURRENT_DATE=$(date +'%Y-%m-%d')
+          NEW_TITLE="LanceDB Index Update - Indochina ($CURRENT_DATE)"
+          
+          echo "Updating release title to: $NEW_TITLE"
+          gh release edit "$LATEST_TAG" --title "$NEW_TITLE"
+          
+          echo "Uploading Indochina index to release: $LATEST_TAG"
+          gh release upload "$LATEST_TAG" lancedb_index_indochina.tar.gz --clobber
