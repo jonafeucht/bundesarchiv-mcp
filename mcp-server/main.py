@@ -44,7 +44,6 @@ class VectorStore:
         self._table = None
         self._cached_filenames: list[str] = []
         self._cached_foldernames: list[str] = []
-        self.is_ready = False
 
     def load(self) -> bool:
         try:
@@ -58,7 +57,6 @@ class VectorStore:
 
             print(f"Ready: LanceDB connected. Table size={len(self._table)}")
             self._refresh_caches()
-            self.is_ready = True
             return True
 
         except Exception as e:
@@ -67,25 +65,33 @@ class VectorStore:
 
     def _refresh_caches(self):
         try:
-            df = (
-                self._table.query()
-                .where("filename IS NOT NULL")
-                .select(["filename"])
-                .to_pandas()
+            df = self._table.to_pandas()
+
+            if "filename" not in df.columns:
+                raise RuntimeError("filename column missing from LanceDB table")
+
+            unique_files = (
+                df["filename"]
+                .dropna()
+                .astype(str)
+                .drop_duplicates()
+                .sort_values()
+                .tolist()
             )
-            unique_files = df["filename"].dropna().unique().tolist()
-            self._cached_filenames = sorted(unique_files)
 
-            folders = set()
-            for path_str in unique_files:
-                parts = Path(path_str).parts
-                if len(parts) > 1:
-                    folders.add(parts[0])
+            self._cached_filenames = unique_files
 
-            self._cached_foldernames = sorted(list(folders))
+            folders = {
+                Path(path).parts[0]
+                for path in unique_files
+                if len(Path(path).parts) > 1
+            }
+
+            self._cached_foldernames = sorted(folders)
+
             print(
-                f"Cache Refreshed: {len(self._cached_filenames)} files, "
-                f"{len(self._cached_foldernames)} categories found."
+                f"Cache refreshed: {len(self._cached_filenames)} files, "
+                f"{len(self._cached_foldernames)} folders."
             )
 
         except Exception as e:
@@ -104,15 +110,17 @@ class VectorStore:
 
         page = max(page, 1)
         per_page = max(min(per_page, 100), 1)
+
         offset = (page - 1) * per_page
+
+        print(
+            f"list_pdfs(page={page}, per_page={per_page}, "
+            f"offset={offset}, total={len(self._cached_filenames)})"
+        )
+
         return self._cached_filenames[offset : offset + per_page]
 
     def total_files_count(self) -> int:
-        try:
-            if self._table is not None:
-                return self._table.count_rows("filename IS NOT NULL")
-        except:
-            pass
         return len(self._cached_filenames)
 
     async def search(
@@ -177,12 +185,10 @@ async def list_tools() -> list[types.Tool]:
                     "page": {
                         "type": "integer",
                         "description": "Page number (defaults to 1)",
-                        "default": 1,
                     },
                     "per_page": {
                         "type": "integer",
                         "description": "Number of files per page (defaults to 50, max 100)",
-                        "default": 50,
                     },
                 },
             },
@@ -212,7 +218,6 @@ async def list_tools() -> list[types.Tool]:
                     "offset": {
                         "type": "integer",
                         "description": "Number of records to skip. Use multiples of top_k (e.g., 5, 10) to view next pages.",
-                        "default": 0,
                     },
                 },
                 "required": ["query"],
@@ -226,13 +231,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     def err(msg: str):
         return [types.TextContent(type="text", text=f"Error: {msg}")]
 
-    if not _store.is_ready:
-        return err("Database is currently initializing. Please try again in a moment.")
-
     try:
         if name == "list_pdfs":
-            page = max(int(arguments.get("page", 1)), 1)
-            per_page = min(max(int(arguments.get("per_page", 50)), 1), 100)
+            print("list_pdfs arguments:", arguments)
+
+            raw_page = arguments.get("page")
+            raw_per_page = arguments.get("per_page")
+
+            page = int(float(raw_page)) if raw_page is not None else 1
+            per_page = int(float(raw_per_page)) if raw_per_page is not None else 50
+
+            page = max(page, 1)
+            per_page = min(max(per_page, 1), 100)
 
             pdfs = _store.list_pdfs(page=page, per_page=per_page)
             total_count = _store.total_files_count()
@@ -255,8 +265,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if not query:
                 return err("query required")
 
-            top_k = min(max(int(arguments.get("top_k", TOP_K)), 1), TOP_K)
-            offset = max(int(arguments.get("offset", 0)), 0)
+            raw_top_k = arguments.get("top_k")
+            raw_offset = arguments.get("offset")
+
+            top_k = int(float(raw_top_k)) if raw_top_k is not None else TOP_K
+            offset = int(float(raw_offset)) if raw_offset is not None else 0
+
+            top_k = min(max(top_k, 1), TOP_K)
+            offset = max(offset, 0)
             filename_filter = arguments.get("filename")
 
             results = await _store.search(
@@ -299,16 +315,13 @@ session_manager = StreamableHTTPSessionManager(
 )
 
 
-async def init_db_background():
-    loop = asyncio.get_running_loop()
-    ok = await loop.run_in_executor(None, _store.load)
-    if not ok:
-        print("CRITICAL: Failed to initialize LanceDB in background task.")
-
-
 @asynccontextmanager
 async def lifespan(_app):
-    asyncio.create_task(init_db_background())
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(None, _store.load)
+
+    if not ok:
+        raise RuntimeError("Failed to load LanceDB index")
 
     async with session_manager.run():
         yield
