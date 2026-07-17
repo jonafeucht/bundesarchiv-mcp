@@ -67,7 +67,7 @@ jobs:
 
       - name: Generate/Update LanceDB Index
         env:
-          PDF_DIR: ${{ github.workspace }}/indochina
+          PDF_DIR: ${{ github.workspace }}/election-integrity
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_election_integrity
         run: python3 ingest_election_integrity.py
 
@@ -85,10 +85,10 @@ jobs:
           fi
           
           CURRENT_DATE=$(date +'%Y-%m-%d')
-          NEW_TITLE="LanceDB Index Update - Indochina ($CURRENT_DATE)"
+          NEW_TITLE="LanceDB Index Update - Election Integrity ($CURRENT_DATE)"
           
           echo "Updating release title to: $NEW_TITLE"
           gh release edit "$LATEST_TAG" --title "$NEW_TITLE"
           
-          echo "Uploading Indochina index to release: $LATEST_TAG"
-          gh release upload "$LATEST_TAG" lancedb_index_indochina.tar.gz --clobber
+          echo "Uploading Election Integrity index to release: $LATEST_TAG"
+          gh release upload "$LATEST_TAG" lancedb_index_election_integrity.tar.gz --clobber
