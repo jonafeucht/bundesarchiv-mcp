@@ -1,13 +1,12 @@
-name: Update LanceDB Index (Indochina)
+name: Update LanceDB Index (Election Integrity)
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - feat-lancedb
     paths:
-      - "indochina/**"
+      - "election-integrity/**"
 
 jobs:
   update-index:
@@ -19,40 +18,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch Indochina Index from Latest Release
+      - name: Fetch Electoin Integrity Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p mcp-server/lancedb_index_indochina
+          mkdir -p mcp-server/lancedb_index_election_integrity
           
-          echo "Searching for latest lancedb_index_indochina.tar.gz asset..."
+          echo "Searching for latest lancedb_index_election_integrity.tar.gz asset..."
           
           # Try to download from the latest release first
-          if gh release download --pattern "lancedb_index_indochina.tar.gz" --dir mcp-server/ 2>/dev/null; then
-            echo "Found Indochina index in latest release."
+          if gh release download --pattern "lancedb_index_election_integrity.tar.gz" --dir mcp-server/ 2>/dev/null; then
+            echo "Found Electoin Integrity index in latest release."
           else
-            echo "Indochina index not found in latest release. Searching previous releases..."
+            echo "Election Integrity index not found in latest release. Searching previous releases..."
             
             FOUND=false
             for TAG in $(gh release list --limit 30 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName'); do
               echo "Checking release: $TAG"
-              if gh release download "$TAG" --pattern "lancedb_index_indochina.tar.gz" --dir mcp-server/ 2>/dev/null; then
-                echo "Found Indochina index in release $TAG."
+              if gh release download "$TAG" --pattern "lancedb_index_election_integrity.tar.gz" --dir mcp-server/ 2>/dev/null; then
+                echo "Found Election Integrity index in release $TAG."
                 FOUND=true
                 break
               fi
             done
             
             if [ "$FOUND" = "false" ]; then
-              echo "No existing Indochina index found. Starting with a fresh index."
+              echo "No existing Election Integrity index found. Starting with a fresh index."
             fi
           fi
 
           # Extract if downloaded
-          if [ -f mcp-server/lancedb_index_indochina.tar.gz ]; then
-            tar -xzf mcp-server/lancedb_index_indochina.tar.gz -C mcp-server/
-            rm mcp-server/lancedb_index_indochina.tar.gz
-            echo "Extracted Indochina index."
+          if [ -f mcp-server/lancedb_index_election_integrity.tar.gz ]; then
+            tar -xzf mcp-server/lancedb_index_election_integrity.tar.gz -C mcp-server/
+            rm mcp-server/lancedb_index_election_integrity.tar.gz
+            echo "Extracted Election Integrity index."
           fi
 
       - name: Set up Python
@@ -69,14 +68,14 @@ jobs:
       - name: Generate/Update LanceDB Index
         env:
           PDF_DIR: ${{ github.workspace }}/indochina
-          DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_indochina
-        run: python3 ingest_indochina.py
+          DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_election_integrity
+        run: python3 ingest_election_integrity.py
 
       - name: Upload index to latest release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tar -czf lancedb_index_indochina.tar.gz -C mcp-server lancedb_index_indochina
+          tar -czf lancedb_index_election_integrity.tar.gz -C mcp-server lancedb_index_election_integrity
           
           LATEST_TAG=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases | awk -F'\t' '{print $3}')
           
