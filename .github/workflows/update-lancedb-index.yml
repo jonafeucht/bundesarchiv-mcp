@@ -1,28 +1,24 @@
 name: Update LanceDB Index
+
 on:
   workflow_dispatch:
   push:
     branches:
       - main
       - feat-lancedb
-    paths:
-      - "mcp-data/**"
+
 jobs:
   update-index:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Fetch Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p mcp-server/lancedb_index
 
-          # Iterate through releases until we find one with the index asset
           PAGE=1
           FOUND=false
           while [ "$FOUND" = "false" ]; do
@@ -45,7 +41,6 @@ jobs:
 
             [ "$FOUND" = "true" ] && break
             PAGE=$((PAGE + 1))
-            # gh release list doesn't support --page, so we break if first 20 all failed
             echo "No index found in these releases, stopping search."
             break
           done
@@ -56,6 +51,17 @@ jobs:
           else
             echo "No index asset found in any release, proceeding with fresh index."
           fi
+
+      - name: Fetch Files from RustFS API
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+        run: |
+          mkdir -p mcp_data_files
+          pip install awscli
+          aws --endpoint-url "$AWS_ENDPOINT_URL" s3 sync "s3://$BUCKET_NAME/mcp-data/" ./mcp_data_files
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,9 +76,10 @@ jobs:
 
       - name: Generate/Update LanceDB Index
         env:
-          PDF_DIR: ${{ github.workspace }}/mcp-data
+          PDF_DIR: ${{ github.workspace }}/mcp_data_files
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index
         run: python3 ingest.py
+
       - name: Upload index to latest release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

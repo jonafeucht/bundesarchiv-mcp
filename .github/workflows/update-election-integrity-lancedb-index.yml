@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "election-integrity/**"
 
 jobs:
   update-index:
@@ -15,10 +13,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Fetch Electoin Integrity Index from Latest Release
+      - name: Fetch Election Integrity Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -26,9 +21,8 @@ jobs:
           
           echo "Searching for latest lancedb_index_election_integrity.tar.gz asset..."
           
-          # Try to download from the latest release first
           if gh release download --pattern "lancedb_index_election_integrity.tar.gz" --dir mcp-server/ 2>/dev/null; then
-            echo "Found Electoin Integrity index in latest release."
+            echo "Found Election Integrity index in latest release."
           else
             echo "Election Integrity index not found in latest release. Searching previous releases..."
             
@@ -47,12 +41,22 @@ jobs:
             fi
           fi
 
-          # Extract if downloaded
           if [ -f mcp-server/lancedb_index_election_integrity.tar.gz ]; then
             tar -xzf mcp-server/lancedb_index_election_integrity.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index_election_integrity.tar.gz
             echo "Extracted Election Integrity index."
           fi
+
+      - name: Fetch Files from RustFS API
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+        run: |
+          mkdir -p election_integrity_files
+          pip install awscli
+          aws --endpoint-url "$AWS_ENDPOINT_URL" s3 sync "s3://$BUCKET_NAME/election-integrity/" ./election_integrity_files
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -67,7 +71,7 @@ jobs:
 
       - name: Generate/Update LanceDB Index
         env:
-          PDF_DIR: ${{ github.workspace }}/election-integrity
+          PDF_DIR: ${{ github.workspace }}/election_integrity_files
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_election_integrity
         run: python3 ingest_election_integrity.py
 

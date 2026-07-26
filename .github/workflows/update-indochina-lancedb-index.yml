@@ -6,8 +6,6 @@ on:
     branches:
       - main
       - feat-lancedb
-    paths:
-      - "indochina/**"
 
 jobs:
   update-index:
@@ -16,9 +14,6 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Fetch Indochina Index from Latest Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -27,7 +22,6 @@ jobs:
           
           echo "Searching for latest lancedb_index_indochina.tar.gz asset..."
           
-          # Try to download from the latest release first
           if gh release download --pattern "lancedb_index_indochina.tar.gz" --dir mcp-server/ 2>/dev/null; then
             echo "Found Indochina index in latest release."
           else
@@ -48,12 +42,22 @@ jobs:
             fi
           fi
 
-          # Extract if downloaded
           if [ -f mcp-server/lancedb_index_indochina.tar.gz ]; then
             tar -xzf mcp-server/lancedb_index_indochina.tar.gz -C mcp-server/
             rm mcp-server/lancedb_index_indochina.tar.gz
             echo "Extracted Indochina index."
           fi
+
+      - name: Fetch Files from RustFS API
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+        run: |
+          mkdir -p indochina_files
+          pip install awscli
+          aws --endpoint-url "$AWS_ENDPOINT_URL" s3 sync "s3://$BUCKET_NAME/indochina/" ./indochina_files
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -68,7 +72,7 @@ jobs:
 
       - name: Generate/Update LanceDB Index
         env:
-          PDF_DIR: ${{ github.workspace }}/indochina
+          PDF_DIR: ${{ github.workspace }}/indochina_files
           DB_URI: ${{ github.workspace }}/mcp-server/lancedb_index_indochina
         run: python3 ingest_indochina.py
 
