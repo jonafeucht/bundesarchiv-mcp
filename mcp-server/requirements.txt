@@ -3,8 +3,8 @@ pymupdf==1.28.0
 requests
 python-dotenv==1.2.2
 lancedb==0.34.0
-sentence-transformers[onnx]==5.6.0
-pandas==3.0.3
-pylance==8.0.0
+sentence-transformers[onnx]==5.6.1
+pandas==3.0.5
+pylance==9.0.0
 tiktoken==0.13.0
 peft==0.19.1
